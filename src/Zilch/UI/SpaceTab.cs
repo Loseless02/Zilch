@@ -54,6 +54,9 @@ namespace Zilch.UI
         /// <summary>The Inspector tab, set by MainForm.</summary>
         public InspectorTab Inspector;
 
+        /// <summary>A new scan (another drive or folder) replaced the old one.</summary>
+        public event Action ScanReplaced;
+
         public SpaceTab()
         {
             Dock = DockStyle.Fill;
@@ -247,9 +250,7 @@ namespace Zilch.UI
             if (s.Key is Cat c)
             {
                 if (_root == null || Inspector == null) return;
-                var items = Categories.Find(_root, c).Select(ci => Item(ci.Path, ci.Size, ci.IsDir, ci.Node, ci.Attr)).ToList();
-                foreach (var i in items) i.Cat = c;
-                Inspector.Show(c, items, _catTotals[(int)c]);
+                Inspector.Show(c, CategoryItems(c), _catTotals[(int)c]);
                 Nav.Show(Inspector);
             }
             else if (s.Key as string == "hidden")
@@ -300,6 +301,17 @@ namespace Zilch.UI
             if (_afterScanSelect != null) { var p = _afterScanSelect; _afterScanSelect = null; OpenPath(p); }
             else Fill();
             UpdateBar();
+            try { if (InvokeRequired) BeginInvoke((Action)(() => ScanReplaced?.Invoke())); else ScanReplaced?.Invoke(); }
+            catch (Exception ex) { Crash.Log(ex, "Inspector update"); }
+        }
+
+        /// <summary>Everything in one category of the current scan, biggest first.</summary>
+        public List<SpaceItem> CategoryItems(Cat c)
+        {
+            if (_root == null) return new List<SpaceItem>();
+            var items = Categories.Find(_root, c).Select(ci => Item(ci.Path, ci.Size, ci.IsDir, ci.Node, ci.Attr)).ToList();
+            foreach (var i in items) i.Cat = c;
+            return items;
         }
 
         /// <summary>Rescan the folder you're looking at (or everything) without starting over.</summary>

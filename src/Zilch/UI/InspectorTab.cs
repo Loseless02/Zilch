@@ -108,6 +108,13 @@ namespace Zilch.UI
             SpaceTab.ApplyColumns(_list);
             AppState.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)Fill); };
             VisibleChanged += (s, e) => { if (Visible && _title.Text == "Inspector" && _space.Root != null) ShowWholeDisk(); };
+            // a new scan (another drive or folder) replaces the old one: follow it, same view
+            _space.ScanReplaced += () =>
+            {
+                if (_title.Text == "Inspector") return;
+                if (_wholeDisk) ShowWholeDisk();
+                else Show(_cat, _space.CategoryItems(_cat), _space.CategoryTotal(_cat));
+            };
             HandleCreated += (s, e) => Cue();
 
             _title.Text = "Inspector";
@@ -138,7 +145,7 @@ namespace Zilch.UI
             _wholeDisk = true;
             _swatch.Visible = false;
             _back.Visible = false;
-            _title.Text = _space.Root.FullPath.TrimEnd('\\') + "  (whole disk)";
+            _title.Text = WholeTitle();
             _total = _space.Root.Size;
             _hits = null;
             Run();
@@ -158,6 +165,12 @@ namespace Zilch.UI
             var sw = Stopwatch.StartNew();
             Task.Run(() => Search.Run(nodes, q, rel, cts.Token)).ContinueWith(t =>
             {
+                // back to the window's own thread, whatever thread finished the search
+                try { if (IsHandleCreated && !IsDisposed) BeginInvoke((Action)(() => Apply(t))); } catch (Exception ex) { Crash.Log(ex, "Search"); }
+            });
+
+            void Apply(Task<List<SearchHit>> t)
+            {
                 if (cts.IsCancellationRequested || IsDisposed) return;
                 if (t.IsFaulted) { Crash.Log(t.Exception, "Search"); _status = "Search failed: " + t.Exception.GetBaseException().Message; Fill(); return; }
                 _hits = t.Result.Select(h => new SpaceItem
@@ -169,7 +182,7 @@ namespace Zilch.UI
                 _status = $"{_hits.Count:N0} match(es) in {sw.Elapsed.TotalSeconds:0.00}s" + (_hits.Count >= 1000 ? " (best 1,000 shown)" : "") +
                           (rel ? $", up to {Search.Tolerance(q.Length)} typo(s) allowed" : "");
                 Fill();
-            }, TaskScheduler.FromCurrentSynchronizationContext());
+            }
         }
 
         void Fill()
@@ -180,6 +193,7 @@ namespace Zilch.UI
             IEnumerable<SpaceItem> source;
             if (_wholeDisk)
             {
+                if (_space.Root != null) { _title.Text = WholeTitle(); _total = _space.Root.Size; }
                 if (q.Length == 0)
                 {
                     var root = _space.Root;
@@ -223,6 +237,12 @@ namespace Zilch.UI
             _info.Text = head + (_status.Length > 0 ? "  " + _status + "." : "") +
                          (hidden > 0 ? $"  {hidden} hidden item(s): Advanced shows them." : "") +
                          (filtered > 0 ? $"  {filtered} hidden by your filter ({Prefs.FilterText()})." : "");
+        }
+
+        string WholeTitle()
+        {
+            var p = _space.Root?.FullPath ?? "";
+            return p.TrimEnd('\\') + (p.Length <= 3 ? "  (whole disk)" : "  (whole scan)");
         }
 
         static string Name(SpaceItem i)
