@@ -18,6 +18,8 @@ namespace Zilch
             BackColor = Theme.Danger, ForeColor = Color.White, Font = Theme.Bold,
             Text = "SUDO MODE: nothing is protected. Hidden and Windows system files are shown and can be force-deleted. You can break Windows.",
         };
+        readonly Label _session = new Label { AutoSize = true, Font = Theme.Bold, ForeColor = Theme.Good, TextAlign = ContentAlignment.MiddleRight, Anchor = AnchorStyles.Right };
+        readonly Label _allTime = new Label { AutoSize = true, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleRight, Anchor = AnchorStyles.Right };
         bool _switching;
 
         static RadioButton ModeButton(string text) => new RadioButton
@@ -34,9 +36,14 @@ namespace Zilch
             Size = new Size(1180, 760);
             MinimumSize = new Size(900, 560);
             StartPosition = FormStartPosition.CenterScreen;
-            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            try
+            {
+                using (var st = typeof(MainForm).Assembly.GetManifestResourceStream("zilch.ico"))
+                    if (st != null) Icon = new Icon(st);
+            }
+            catch { }
 
-            var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 8, 8, 4), WrapContents = false };
+            var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(8, 8, 8, 4), WrapContents = false };
             bar.Controls.Add(new Label { Text = "Mode:", AutoSize = true, Padding = new Padding(0, 7, 4, 0), Font = Theme.Bold });
             bar.Controls.AddRange(new Control[] { _simple, _advanced, _sudo, _recycle });
             if (!Elevation.IsAdmin)
@@ -50,17 +57,37 @@ namespace Zilch
             tip.SetToolTip(_advanced, "Shows hidden files, similar-name leftovers, registry details, silent/force uninstall, optional Windows apps.");
             tip.SetToolTip(_sudo, "Admin. Shows and deletes EVERYTHING, including Windows system files and apps Windows marks non-removable.");
 
+            // wiped counters, top right
+            var stats = new TableLayoutPanel { Dock = DockStyle.Right, AutoSize = true, ColumnCount = 1, RowCount = 2, Padding = new Padding(0, 4, 10, 2) };
+            stats.Controls.Add(_session, 0, 0);
+            stats.Controls.Add(_allTime, 0, 1);
+            var header = new Panel { Dock = DockStyle.Top, Height = 46 };
+            header.Controls.Add(bar);
+            header.Controls.Add(stats);
+            ShowStats();
+            Stats.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)ShowStats); };
+
             var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(14, 5) };
             void Tab(string name, Control c) { var p = new TabPage(name); p.Controls.Add(c); tabs.TabPages.Add(p); }
-            Tab("Space", new SpaceTab());
+            var space = new SpaceTab();
+            var inspector = new InspectorTab(space);
+            space.Inspector = inspector;
+            Tab("Space", space);
+            Tab("Inspector", inspector);
             Tab("Apps", new AppsTab());
+            Tab("Startup", new StartupTab());
+            Tab("Processes", new ProcessesTab(space));
             Tab("Windows Bloat", new BloatTab());
             Tab("Junk", new JunkTab());
             Tab("Logs", new LogsTab());
+            Nav.Show = c =>
+            {
+                foreach (TabPage p in tabs.TabPages) if (p.Contains(c)) { tabs.SelectedTab = p; return; }
+            };
 
             Controls.Add(tabs);
             Controls.Add(_banner);
-            Controls.Add(bar);
+            Controls.Add(header);
 
             _simple.Checked = true;
             _simple.CheckedChanged += (s, e) => { if (_simple.Checked) SetMode(Mode.Simple); };
@@ -70,6 +97,13 @@ namespace Zilch
             PaintModes();
 
             if (wantSudo && Elevation.IsAdmin) Shown += (s, e) => _sudo.Checked = true;
+        }
+
+        void ShowStats()
+        {
+            _session.Text = Stats.SessionLine();
+            _allTime.Text = Stats.AllTimeLine();
+            _allTime.Visible = _allTime.Text.Length > 0;
         }
 
         void SetMode(Mode m)

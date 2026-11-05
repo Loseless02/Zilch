@@ -14,6 +14,9 @@ namespace Zilch.Core
         public long OwnFilesSize;    // bytes of files directly inside
         public long FileCount;       // recursive
         public bool Denied;          // could not be read
+        public Cat Cat;              // what kind of data this folder is (see Categories)
+        public byte[] OwnCats;       // folders that sort files by type: categories of the files directly inside...
+        public long[] OwnCatBytes;   // ...and their bytes. null when the folder's own Cat takes all its files.
         public List<DirNode> Children = new List<DirNode>();
 
         public string FullPath
@@ -51,6 +54,8 @@ namespace Zilch.Core
 
         readonly CancellationToken _ct;
         readonly int _topN;
+        bool _serial;               // no parallel fan-out (small one-folder measurements)
+        const int MaxDepth = 400;   // deeper trees are only built by mistake or on purpose; don't blow the stack
         readonly List<FileEntry> _top = new List<FileEntry>();
         long _topMin; // smallest size currently in _top once full
 
@@ -64,6 +69,22 @@ namespace Zilch.Core
             var node = new DirNode { Name = root, Attributes = Native.FILE_ATTRIBUTE_DIRECTORY };
             ScanDir(node, root.TrimEnd('\\'), 0);
             return node;
+        }
+
+        /// <summary>
+        /// Scan one folder of an existing tree again (after deleting or emptying it, or on Refresh)
+        /// and fix the sizes of every folder above it.
+        /// </summary>
+        public static void Rescan(DirNode node)
+        {
+            long oldSize = node.Size, oldFiles = node.FileCount;
+            node.Children = new List<DirNode>();
+            node.Denied = false;
+            node.OwnCats = null; node.OwnCatBytes = null;
+            node.Size = node.OwnFilesSize = node.FileCount = 0;
+            new Scanner(CancellationToken.None, 1).ScanDir(node, node.FullPath.TrimEnd('\\'), 0);
+            long dSize = node.Size - oldSize, dFiles = node.FileCount - oldFiles;
+            for (var p = node.Parent; p != null; p = p.Parent) { p.Size += dSize; p.FileCount += dFiles; }
         }
 
         /// <summary>Biggest files seen during the scan, largest first.</summary>
@@ -83,6 +104,8 @@ namespace Zilch.Core
         {
             if (_ct.IsCancellationRequested) return;
             CurrentPath = path;
+            node.Cat = node.Parent == null ? Categories.ForPath(path) : Categories.ForDir(node.Parent.Cat, node.Name, path);
+            if (depth > MaxDepth) { node.Denied = true; return; }
 
             var h = Native.FindFirstFileExW(Long(path) + "\\*", Native.FindExInfoBasic, out var fd,
                 Native.FindExSearchNameMatch, IntPtr.Zero, Native.FIND_FIRST_EX_LARGE_FETCH);
@@ -94,6 +117,8 @@ namespace Zilch.Core
             }
 
             long ownSize = 0, ownFiles = 0;
+            bool split = !Categories.Absorbs(node.Cat);
+            long[] catBytes = null;
             try
             {
                 do
@@ -111,6 +136,7 @@ namespace Zilch.Core
                         long size = ((long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
                         ownSize += size;
                         ownFiles++;
+                        if (split) (catBytes ?? (catBytes = new long[Categories.N]))[(int)Categories.ForFile(name, node.Cat)] += size;
                         if (size > Volatile.Read(ref _topMin)) OfferTop(path + "\\" + name, size, fd.dwFileAttributes);
                     }
                 } while (Native.FindNextFileW(h, out fd));
@@ -119,8 +145,17 @@ namespace Zilch.Core
 
             Interlocked.Add(ref FilesSeen, ownFiles);
             Interlocked.Add(ref BytesSeen, ownSize);
+            if (catBytes != null)
+            {
+                int k = 0;
+                foreach (var b in catBytes) if (b > 0) k++;
+                node.OwnCats = new byte[k]; node.OwnCatBytes = new long[k];
+                k = 0;
+                for (int i = 0; i < catBytes.Length; i++)
+                    if (catBytes[i] > 0) { node.OwnCats[k] = (byte)i; node.OwnCatBytes[k++] = catBytes[i]; }
+            }
 
-            if (depth < 3 && node.Children.Count > 1)
+            if (!_serial && depth < 3 && node.Children.Count > 1)
             {
                 Parallel.ForEach(node.Children,
                     new ParallelOptions { CancellationToken = CancellationToken.None, MaxDegreeOfParallelism = Environment.ProcessorCount * 2 },
@@ -194,9 +229,9 @@ namespace Zilch.Core
             try
             {
                 if (System.IO.File.Exists(path)) return new System.IO.FileInfo(path).Length;
-                var s = new Scanner(ct, 1);
+                var s = new Scanner(ct, 1) { _serial = true };
                 var n = new DirNode { Name = path };
-                s.ScanDir(n, path.TrimEnd('\\'), 99); // depth 99 = no parallel fan-out
+                s.ScanDir(n, path.TrimEnd('\\'), 0);
                 return n.Size;
             }
             catch { return 0; }

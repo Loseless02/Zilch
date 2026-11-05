@@ -75,7 +75,7 @@ namespace Zilch.UI
             _total.Text = $"Found {Fmt.Size(visible.Where(j => j.Size > 0).Sum(j => j.Size))} of junk.   " + _total.Text;
         }
 
-        async void Clean()
+        void Clean()
         {
             var sel = Checked();
             if (sel.Count == 0) return;
@@ -88,16 +88,20 @@ namespace Zilch.UI
             if (MessageBox.Show(this, "Clean these?\n\n" + string.Join("\n", sel.Select(j => "• " + j.Name)) +
                 "\n\nFiles in use are skipped. This cannot be undone.", "Zilch", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
-            _analyze.Enabled = _clean.Enabled = false; UseWaitCursor = true;
-            _total.Text = "Cleaning…";
-            var r = await Task.Run(() =>
+            var r = Busy.Run(this, "Cleaning junk…", f =>
             {
                 var res = new DeleteResult();
-                foreach (var j in sel) { try { j.Clean(res); } catch (Exception ex) { res.Failed.Add(j.Name + ": " + ex.Message); } }
+                for (int i = 0; i < sel.Count; i++)
+                {
+                    var j = sel[i];
+                    f.Report(j.Name, (double)i / sel.Count);
+                    try { j.Clean(res); } catch (Exception ex) { res.Failed.Add(j.Name + ": " + ex.Message); }
+                }
+                f.Report("Measuring what's left…");
                 foreach (var j in sel) { try { j.Size = j.Measure(); } catch { } }
                 return res;
             });
-            _analyze.Enabled = _clean.Enabled = true; UseWaitCursor = false;
+            if (r == null) { Fill(); return; }
             History.Add("Junk cleanup", r, sel.Select(j => j.Name));
             Fill();
             MessageBox.Show(this, r.Summary(), "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);

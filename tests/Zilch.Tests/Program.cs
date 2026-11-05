@@ -32,9 +32,13 @@ internal static class Program
         {
             GuardTests(sandbox);
             ScannerTests(sandbox);
+            CategoryTests(sandbox);
             DeleterTests(sandbox);
             LeftoverTests(sandbox);
             ReadOnlyTests(args.Contains("--scan-c"));
+            ProcessTests();
+            StartupTests();
+            PowerShellTests();
             HistoryTests();
         }
         catch (Exception ex)
@@ -106,6 +110,54 @@ internal static class Program
         Check(top.Count == 5 && top[0].Path.EndsWith("big.bin"), "biggest file first");
         Check(top.Any(f => f.Path.EndsWith("hidden.bin") && f.Hidden), "hidden file seen and flagged");
         Check(Scanner.SizeOf(root) == 53100, "SizeOf matches");
+    }
+
+    // ------------------------------------------------------------------
+    static void CategoryTests(string sandbox)
+    {
+        Section("Categories: the colored disk bar");
+        string Sf(Environment.SpecialFolder f) => Environment.GetFolderPath(f);
+        var win = Sf(Environment.SpecialFolder.Windows);
+        var pf = Environment.GetEnvironmentVariable("ProgramFiles");
+        var pf86 = Environment.GetEnvironmentVariable("ProgramFiles(x86)");
+        var local = Sf(Environment.SpecialFolder.LocalApplicationData);
+        var home = Sf(Environment.SpecialFolder.UserProfile);
+        Check(Categories.ForPath(win) == Cat.Windows && Categories.ForPath(Path.Combine(win, "System32")) == Cat.Windows, @"C:\Windows = Windows");
+        Check(Categories.ForPath(pf) == Cat.Programs, "Program Files = Programs");
+        Check(Categories.ForPath(pf86 + @"\Steam\steamapps\common\SomeGame") == Cat.Games, "steamapps inside Program Files = Games");
+        Check(Categories.ForPath(pf86 + @"\Steam\steamapps\shadercache") == Cat.Cache, "Steam shader cache = Caches");
+        Check(Categories.ForPath(local + @"\NVIDIA\DXCache") == Cat.Cache, "NVIDIA DXCache = Caches");
+        Check(Categories.ForPath(local + @"\Discord") == Cat.AppData, "AppData app folder = App data");
+        Check(Categories.ForPath(local + @"\Programs\SomeApp") == Cat.Programs, @"AppData\Local\Programs = Programs");
+        Check(Categories.ForPath(home + @"\code\site\node_modules") == Cat.Dev, "node_modules = Developer");
+        Check(Categories.ForPath(@"D:\$Recycle.Bin\S-1-5-21") == Cat.RecycleBin, "$Recycle.Bin = Recycle Bin");
+        Check(Categories.ForPath(home + @"\Videos") == Cat.Unknown, "user folders sort by file type");
+        Check(Categories.ForFile("clip.MP4", Cat.Unknown) == Cat.Video && Categories.ForFile("x.mkv", Cat.AppData) == Cat.Video, "videos by extension");
+        Check(Categories.ForFile("setup.exe", Cat.Unknown) == Cat.Archive && Categories.ForFile("app.exe", Cat.AppData) == Cat.AppData, "installers vs app files");
+        Check(Categories.ForFile("pagefile.sys", Cat.Unknown) == Cat.Windows, "pagefile.sys = Windows");
+        Check(Categories.ForFile("README", Cat.Unknown) == Cat.Unknown, "no extension = Unknown");
+        Check(Categories.ForFile("intro.mp4", Cat.Games) == Cat.Games, "a game's own videos stay Games");
+
+        var n = new DirNode { Name = "x", Cat = Cat.Unknown, OwnFilesSize = 105, OwnCats = new[] { (byte)Cat.Video, (byte)Cat.Unknown }, OwnCatBytes = new long[] { 100, 5 } };
+        var t = Categories.Totals(n);
+        Check(t[(int)Cat.Video] == 100 && t[(int)Cat.Unknown] == 5, "totals per category");
+        Categories.RemoveFile(n, "gone.mp4", 100);
+        Check(Categories.Totals(n)[(int)Cat.Video] == 0, "deleted file leaves its category");
+
+        // the sandbox lives in %TEMP%, so all of it is "Caches & temp"
+        var root = Path.Combine(sandbox, "scan");
+        var s = new Scanner(default);
+        var tree = s.Scan(root);
+        var tt = Categories.Totals(tree);
+        Check(tree.Cat == Cat.Cache && tt[(int)Cat.Cache] == tree.Size, $"everything under Temp counts as Caches ({Fmt.Size(tt[(int)Cat.Cache])})");
+        var found = Categories.Find(tree, Cat.Cache);
+        Check(found.Sum(f => f.Size) == tree.Size, $"Inspector list adds up to the category total ({found.Count} items)");
+
+        // delete a file, rescan its folder: sizes above it follow
+        File.Delete(Path.Combine(root, @"a\b\big.bin"));
+        var a = tree.Children.First(c => c.Name == "a");
+        Scanner.Rescan(a);
+        Check(a.Size == 2000 && tree.Size == 3100 && tree.FileCount == 4, $"rescan fixes parent sizes (root {tree.Size}, files {tree.FileCount})");
     }
 
     // ------------------------------------------------------------------
@@ -285,6 +337,79 @@ internal static class Program
             foreach (var c in n.Children.OrderByDescending(c => c.Size).Take(8))
                 Console.WriteLine($"       {Fmt.Size(c.Size),10}  {c.Name}");
         }
+    }
+
+    // ------------------------------------------------------------------
+    static void ProcessTests()
+    {
+        Section("Processes tab (reads only, ends only a process the test starts)");
+        var sampler = new ProcSampler();
+        var sw = Stopwatch.StartNew();
+        sampler.Sample();
+        var first = sw.ElapsedMilliseconds;
+        System.Threading.Thread.Sleep(700);
+        sw.Restart();
+        var list = sampler.Sample();
+        Check(list.Count > 20, $"{list.Count} processes, first sample {first} ms, next {sw.ElapsedMilliseconds} ms");
+        var me = list.FirstOrDefault(p => p.Pid == Process.GetCurrentProcess().Id);
+        var exe = Process.GetCurrentProcess().MainModule.FileName;
+        Check(me != null && string.Equals(me.Path, exe, StringComparison.OrdinalIgnoreCase), "finds itself with the right path");
+        Check(me != null && me.PrivateMem > 1 << 20 && me.Threads > 0, $"memory {Fmt.Size(me?.PrivateMem ?? 0)}, {me?.Threads} threads");
+        Check(list.All(p => p.Cpu >= 0 && p.Cpu <= 100), "CPU % in range");
+        var u = sampler.Usage;
+        Check(u.RamTotal > 0 && u.RamUsed > 0 && u.Cpu >= 0 && u.Cpu <= 100, $"system: CPU {u.Cpu:0}%, RAM {Fmt.Size(u.RamUsed)} / {Fmt.Size(u.RamTotal)}");
+        Console.WriteLine($"       GPU {(u.Gpu < 0 ? "n/a" : u.Gpu.ToString("0") + "%")}, VRAM {(u.VramUsed < 0 ? "n/a" : Fmt.Size(u.VramUsed))} of {(u.VramTotal < 0 ? "?" : Fmt.Size(u.VramTotal))}");
+        Console.WriteLine("       kinds: " + string.Join(", ", list.GroupBy(p => p.Kind).Select(g => $"{g.Key} {g.Count()}")));
+        Check(list.Where(p => p.Name.Equals("csrss.exe", StringComparison.OrdinalIgnoreCase)).All(p => p.Kind == ProcKind.Windows), "csrss is Windows");
+
+        // start cmd -> ping, end the tree
+        var parent = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true });
+        System.Threading.Thread.Sleep(800);
+        list = sampler.Sample();
+        var root = list.FirstOrDefault(p => p.Pid == parent.Id);
+        var tree = root == null ? new List<ProcInfo>() : ProcSampler.Tree(root, list);
+        Check(tree.Count >= 2 && tree.Any(p => p.Name.Equals("PING.EXE", StringComparison.OrdinalIgnoreCase)), "process tree includes the child");
+        foreach (var p in tree) ProcSampler.Kill(p);
+        Check(parent.WaitForExit(3000), "test process tree ended");
+        list = sampler.Sample();
+        Check(!tree.Any(t => list.Any(p => p.Key == t.Key)), "no part of it still running");
+    }
+
+    // ------------------------------------------------------------------
+    static void StartupTests()
+    {
+        Section("Startup tab (one dummy HKCU Run entry, removed again)");
+        var sw = Stopwatch.StartNew();
+        var all = Startup.Load(true, false);
+        Check(true, $"{all.Count} startup items read in {sw.ElapsedMilliseconds} ms: " +
+                    string.Join(", ", all.GroupBy(i => i.Source).Select(g => $"{g.Key} {g.Count()}")));
+        const string name = "ZilchTestStartup";
+        const string run = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string approved = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        try
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(run)) k.SetValue(name, "\"C:\\ZilchTest\\does-not-exist.exe\" --test");
+            StartupItem Get() => Startup.Load(false, false).FirstOrDefault(i => i.Name == name);
+            var it = Get();
+            Check(it != null && it.Enabled && it.Source == StartupSource.RunUser, "dummy entry listed, enabled");
+            Check(it != null && Startup.SetEnabled(it, false) == null && !Get().Enabled, "disabled (StartupApproved switch)");
+            Check(Startup.SetEnabled(Get(), true) == null && Get().Enabled, "enabled again");
+            Check(Startup.Remove(Get()) == null && Get() == null, "entry removed");
+            using (var k = Registry.CurrentUser.OpenSubKey(approved)) Check(k?.GetValue(name) == null, "its on/off switch removed too");
+        }
+        finally
+        {
+            using (var k = Registry.CurrentUser.OpenSubKey(run, true)) k?.DeleteValue(name, false);
+            using (var k = Registry.CurrentUser.OpenSubKey(approved, true)) k?.DeleteValue(name, false);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    static void PowerShellTests()
+    {
+        Section("PowerShell runner");
+        var (code, output) = PS.Run("function Hi($n) { \"hi $n\" }\n$t = @'\nzilch-ok ü ı\n'@\nHi 'there'\nWrite-Output $t");
+        Check(code == 0 && output.Contains("hi there") && output.Contains("zilch-ok ü ı"), "multi-line script with non-English text runs" + (code != 0 ? $" (code {code}: {output.Trim()})" : ""));
     }
 
     // ------------------------------------------------------------------

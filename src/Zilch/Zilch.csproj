@@ -10,7 +10,8 @@
     <AssemblyName>Zilch</AssemblyName>
     <RootNamespace>Zilch</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.0.0</Version>
+    <ApplicationIcon>zilch.ico</ApplicationIcon>
+    <Version>1.1.0</Version>
     <Product>Zilch</Product>
     <Description>Find what eats your disk and remove it with zilch left behind.</Description>
     <Copyright>Loseless02</Copyright>
@@ -22,6 +23,10 @@
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="zilch.ico" LogicalName="zilch.ico" />
   </ItemGroup>
 
 </Project>

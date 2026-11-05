@@ -17,7 +17,37 @@ namespace Zilch.UI
         public static readonly Color Accent = Color.FromArgb(0, 103, 192);
         public static readonly Color Warn = Color.FromArgb(157, 93, 0);
         public static readonly Color Bar = Color.FromArgb(0, 120, 215);
+        public static readonly Color Good = Color.FromArgb(16, 124, 16);
+        public static readonly Color Purple = Color.FromArgb(128, 57, 196);
+        public static readonly Color Slate = Color.FromArgb(84, 96, 110);
         public static readonly Font Bold = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold);
+
+        public static readonly Color[] CatColors =
+        {
+            Color.FromArgb(185, 185, 185), // Unknown
+            Color.FromArgb(52, 73, 94),    // Windows & system
+            Color.FromArgb(47, 128, 237),  // Programs
+            Color.FromArgb(39, 174, 96),   // Games
+            Color.FromArgb(155, 81, 224),  // App data
+            Color.FromArgb(242, 153, 74),  // Caches & temp
+            Color.FromArgb(0, 150, 160),   // Developer
+            Color.FromArgb(235, 87, 87),   // Videos
+            Color.FromArgb(230, 190, 50),  // Pictures
+            Color.FromArgb(224, 86, 160),  // Audio
+            Color.FromArgb(141, 110, 99),  // Documents
+            Color.FromArgb(150, 150, 40),  // Archives & installers
+            Color.FromArgb(61, 90, 254),   // Disk images
+            Color.FromArgb(120, 144, 156), // Recycle Bin
+        };
+        public static Color Of(Cat c) => CatColors[(int)c];
+        public static readonly Color Hidden = Color.FromArgb(95, 95, 95);
+        public static readonly Color Free = Color.FromArgb(232, 232, 232);
+    }
+
+    /// <summary>Lets one tab bring another to the front (Space, Inspector...).</summary>
+    public static class Nav
+    {
+        public static Action<Control> Show = c => { };
     }
 
     /// <summary>ListView without flicker, with click-to-sort columns.</summary>
@@ -39,6 +69,22 @@ namespace Zilch.UI
 
         /// <summary>Columns sorted by the long stored in SubItem.Tag (sizes).</summary>
         public HashSet<int> NumericColumns = new HashSet<int>();
+
+        public void SortBy(int column, bool desc) =>
+            ListViewItemSorter = new Sorter { Column = column, Desc = desc, Numeric = NumericColumns.Contains(column) };
+
+        public void SelectAll()
+        {
+            BeginUpdate();
+            foreach (ListViewItem i in Items) if (i.Tag != null) i.Selected = true;
+            EndUpdate();
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.A && MultiSelect) { SelectAll(); e.Handled = true; }
+            base.OnKeyDown(e);
+        }
 
         class Sorter : IComparer
         {

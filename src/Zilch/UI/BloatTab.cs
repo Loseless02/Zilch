@@ -56,12 +56,11 @@ namespace Zilch.UI
 
             _edge.Click += (s, e) => RemoveEdge();
             _onedrive.Click += (s, e) => RemoveOneDrive();
-            _restore.Click += async (s, e) =>
+            _restore.Click += (s, e) =>
             {
                 if (!Elevation.Require(this, "Restore points need admin rights.")) return;
-                _restore.Enabled = false; _status.Text = "Creating restore point…";
-                bool ok = await Task.Run(() => Debloat.CreateRestorePoint());
-                _restore.Enabled = true; _status.Text = ok ? "Restore point created." : "Could not create a restore point (System Protection off?).";
+                bool ok = Busy.Run(this, "Creating restore point…", f => Debloat.CreateRestorePoint());
+                _status.Text = ok ? "Restore point created." : "Could not create a restore point (System Protection off?).";
                 History.Add("Restore point", ok ? "created" : "failed");
             };
             _load.Click += (s, e) => LoadApps();
@@ -117,7 +116,7 @@ namespace Zilch.UI
             else _status.Text = "Press Load apps.   ";
         }
 
-        async void RemoveApps()
+        void RemoveApps()
         {
             var sel = _list.CheckedItems.Cast<ListViewItem>().Select(i => (AppxApp)i.Tag).ToList();
             if (sel.Count == 0) return;
@@ -139,22 +138,20 @@ namespace Zilch.UI
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
             bool force = AppState.IsSudo, block = _block.Checked;
-            _remove.Enabled = _load.Enabled = false; UseWaitCursor = true;
-            int done = 0;
-            var progress = new Progress<string>(s => _status.Text = s);
-            var (ok, failed) = await Task.Run(() =>
+            var res = Busy.Run(this, "Removing Windows apps…", bf =>
             {
                 int okc = 0; var fl = new List<string>();
-                foreach (var a in sel)
+                for (int i = 0; i < sel.Count; i++)
                 {
-                    ((IProgress<string>)progress).Report($"Removing {a.Friendly} ({++done}/{sel.Count})…");
-                    var (o, f) = Debloat.RemoveAppx(new[] { a }, force);
+                    bf.Report($"{sel[i].Friendly} ({i + 1}/{sel.Count})", (double)i / sel.Count);
+                    var (o, f) = Debloat.RemoveAppx(new[] { sel[i] }, force);
                     okc += o; fl.AddRange(f);
                 }
-                if (block) Debloat.BlockReinstall();
-                return (okc, fl);
+                if (block) { bf.Report("Telling Windows not to bring them back…"); Debloat.BlockReinstall(); }
+                return Tuple.Create(okc, fl);
             });
-            _remove.Enabled = _load.Enabled = true; UseWaitCursor = false;
+            if (res == null) { LoadApps(); return; }
+            int ok = res.Item1; var failed = res.Item2;
             History.Add("Removed Windows apps", $"{ok} removed, {failed.Count} failed" + (block ? ", reinstall blocked" : ""),
                 sel.Select(a => "- " + a.Name).Concat(failed.Select(f => "! failed: " + f)));
             MessageBox.Show(this, $"Removed {ok} app(s)." + (failed.Count > 0 ? "\n\nCould not remove:\n" + string.Join("\n", failed) +
@@ -162,7 +159,7 @@ namespace Zilch.UI
             LoadApps();
         }
 
-        async void RemoveEdge()
+        void RemoveEdge()
         {
             if (!Debloat.EdgeInstalled && !Debloat.WebViewInstalled) { Dialogs.Info(this, "Edge is already gone."); return; }
             if (!Elevation.Require(this, "Removing Edge needs admin rights.")) return;
@@ -176,12 +173,12 @@ namespace Zilch.UI
             if (MessageBox.Show(this, text, "Remove Edge", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
 
             bool force = AppState.IsSudo;
-            _edge.Enabled = false; UseWaitCursor = true; _status.Text = "Removing Edge…";
-            var (removed, log) = await Task.Run(() => Debloat.RemoveEdge(wv, force));
+            var edgeRes = Busy.Run(this, "Removing Microsoft Edge…", f => { var t = Debloat.RemoveEdge(wv, force); return Tuple.Create(t.Item1, t.Item2); });
+            if (edgeRes == null) return;
+            bool removed = edgeRes.Item1; string log = edgeRes.Item2;
             History.Add("Remove Edge", removed ? "Edge removed" : "Edge uninstall incomplete", log.Split('\n').Select(l => l.TrimEnd('\r')));
 
-            _status.Text = "Looking for Edge leftovers…";
-            var left = await Task.Run(() =>
+            var left = Busy.Run(this, "Looking for Edge leftovers…", bf =>
             {
                 var l = Debloat.EdgeLeftovers(wv);
                 var finder = new LeftoverFinder("Microsoft Edge", "Microsoft Corporation", Debloat.EdgeDir, null).Find(false);
@@ -193,27 +190,24 @@ namespace Zilch.UI
                 }
                 return l;
             });
-            _edge.Enabled = true; UseWaitCursor = false; _status.Text = "";
-            await ReviewAndRemove("Edge leftovers", left);
+            ReviewAndRemove("Edge leftovers", left ?? new List<Leftover>());
             MessageBox.Show(this, log, "Edge", MessageBoxButtons.OK, removed ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             RefreshState();
         }
 
-        async void RemoveOneDrive()
+        void RemoveOneDrive()
         {
             if (Debloat.OneDriveUninstaller() == null) { Dialogs.Info(this, "OneDrive is already gone."); return; }
             if (MessageBox.Show(this, "Remove OneDrive?\n\nFiles that are only in the cloud stay in the cloud. Your local OneDrive folder is NOT deleted.",
                 "Remove OneDrive", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
-            _onedrive.Enabled = false; UseWaitCursor = true;
-            var msg = await Task.Run(() => Debloat.RemoveOneDrive());
-            var left = await Task.Run(() => new LeftoverFinder("Microsoft OneDrive", "Microsoft Corporation", null, null).Find(false));
-            _onedrive.Enabled = true; UseWaitCursor = false;
+            var msg = Busy.Run(this, "Removing OneDrive…", f => Debloat.RemoveOneDrive()) ?? "failed";
+            var left = Busy.Run(this, "Looking for OneDrive leftovers…", f => new LeftoverFinder("Microsoft OneDrive", "Microsoft Corporation", null, null).Find(false));
             History.Add("Remove OneDrive", msg);
-            await ReviewAndRemove("OneDrive leftovers", left);
+            ReviewAndRemove("OneDrive leftovers", left ?? new List<Leftover>());
             RefreshState();
         }
 
-        async Task ReviewAndRemove(string title, List<Leftover> items)
+        void ReviewAndRemove(string title, List<Leftover> items)
         {
             if (items.Count == 0) return;
             using (var dlg = new LeftoverDialog(title, "Traces found. Uncheck anything you want to keep.", items))
@@ -221,7 +215,8 @@ namespace Zilch.UI
                 if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Chosen.Count == 0) return;
                 var chosen = dlg.Chosen;
                 bool recycle = AppState.UseRecycleBin, force = AppState.IsSudo;
-                var r = await Task.Run(() => LeftoverFinder.Remove(chosen, recycle, force));
+                var r = Busy.Run(this, "Removing " + title.ToLowerInvariant() + "…", f => LeftoverFinder.Remove(chosen, recycle, force));
+                if (r == null) return;
                 History.Add(title, r, chosen.Select(c => $"[{c.Kind}] {c.Path}"));
                 MessageBox.Show(this, r.Summary(), title);
             }

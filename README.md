@@ -2,7 +2,7 @@
 
 **Find what eats your disk, and remove it with zilch left behind.**
 
-Zilch is a tiny (~150 KB), fast Windows cleaner. One `.exe`, no installer, nothing to set up.
+Zilch is a tiny (~300 KB), fast Windows cleaner. One `.exe`, no installer, nothing to set up.
 It shows you where your storage went, uninstalls programs *and every trace they leave*,
 and rips out the stuff Windows preinstalls and won't let you remove: Edge, Copilot, Xbox, Bing apps, OneDrive and friends.
 
@@ -13,11 +13,18 @@ and rips out the stuff Windows preinstalls and won't let you remove: Edge, Copil
 
 | Tab | What it does |
 |---|---|
-| **Space** | Scans a whole drive in seconds (multi-threaded, raw Win32 file API). Drill into folders sorted by size, see the biggest files on the drive, and how much space Windows hides from normal apps. |
+| **Space** | Scans a whole drive in seconds (multi-threaded, raw Win32 file API). A colored bar on top splits the disk into Games, Programs, Windows, App data, Caches, Videos, Pictures, Developer stuff, Disk images and more (Unknown for anything else), and the free space updates live. Drill into folders sorted by size, see the biggest files, **Select all**, **Free up this folder** (deletes everything inside, keeps the folder), **Refresh** just the folder you're in. |
+| **Inspector** | Click a color in the bar and every folder and file of that kind is listed here, biggest first, ready to open in Zilch or Explorer, or delete. |
 | **Apps** | Every installed program with its real size. **Uninstall + wipe traces** runs the program's own uninstaller, then hunts down everything it left: AppData (Roaming/Local/LocalLow), ProgramData, Documents, Program Files remnants, Start Menu & Desktop shortcuts, registry keys, scheduled tasks and services. You review the list, Zilch removes it. |
+| **Startup** | Everything that starts with Windows: Run keys, Startup folders, Store apps (Advanced adds scheduled tasks and services). Enable/disable with the same switch Task Manager uses, or remove the entry. |
+| **Processes** | A task manager that updates every second: CPU, RAM, GPU and VRAM per process (with 60 s graphs for the whole PC), disk I/O, what each process is doing (window title / description), its publisher and path. Color-coded: Windows, services, apps, background, and **unknown** (no signature, no publisher). End a process or its whole tree, show it in Explorer or in Zilch. |
 | **Windows Bloat** | Removes preinstalled Store apps for **every user** and deprovisions them so new accounts and feature updates don't bring them back. Removes **Microsoft Edge** (forced system uninstall + blocks reinstall) and **OneDrive**. Optional switch stops Windows silently installing "suggested" apps and turns off Copilot. Restore point button. |
 | **Junk** | Temp files, Recycle Bin, thumbnail cache, crash dumps, browser caches, GPU shader caches, Windows Update leftovers, Delivery Optimization, old `Windows.old`, hibernation file, component store cleanup. |
-| **Logs** | Every delete, uninstall and cleanup Zilch did, with the full list of paths. Stored locally, clearable. |
+| **Logs** | Every delete, uninstall, cleanup, ended process and startup change Zilch did, with the full list of paths. Errors Zilch caught land here too. Stored locally, clearable. |
+
+Top right: how much you wiped this session, and for all time.
+
+While Zilch deletes, uninstalls or cleans, a progress window with a timestamp locks the app, so nothing can be clicked or closed mid-way. Every error is caught and logged; Zilch keeps running.
 
 ## Modes
 
@@ -69,8 +76,8 @@ The self-tests only ever create and delete their own `ZilchTest*` dummy files, f
 
 ## Privacy
 
-No telemetry, no network calls, no settings files. The only thing Zilch writes is its own history at
-`%LOCALAPPDATA%\Zilch\history.log` (Logs tab → *Clear history* deletes it).
+No telemetry, no network calls, no settings files. The only things Zilch writes are its own history at
+`%LOCALAPPDATA%\Zilch\history.log` (Logs tab → *Clear history* deletes it) and the all-time wiped counter in `wiped.txt` next to it.
 
 ## License
 

@@ -112,7 +112,7 @@ namespace Zilch.UI
 
         InstalledApp Sel() => _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as InstalledApp : null;
 
-        async void Uninstall(bool force)
+        void Uninstall(bool force)
         {
             var a = Sel();
             if (a == null) { Dialogs.Info(this, "Pick a program first."); return; }
@@ -129,47 +129,44 @@ namespace Zilch.UI
                 : $"Uninstall {a.Name}?\n\nIts own uninstaller runs first. Afterwards Zilch searches for every trace it left and shows you the list.";
             if (MessageBox.Show(this, msg, verb, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
 
-            SetBusy(true, force ? "Removing…" : $"Waiting for {a.Name}'s uninstaller to finish…");
             int? code = null;
             if (!force)
             {
                 var mode = _quiet.Checked && AppState.IsAdvancedOrMore ? InstalledApps.UninstallMode.Quiet : InstalledApps.UninstallMode.Normal;
-                code = await Task.Run(() => InstalledApps.RunUninstaller(a, mode));
+                code = Busy.Run(this, $"Waiting for {a.Name}'s uninstaller to finish…", f =>
+                {
+                    f.Report("If the uninstaller opened a window, finish it there.");
+                    return InstalledApps.RunUninstaller(a, mode);
+                });
                 History.Add("Uninstaller ran", $"{a.Name}: exit code {(code?.ToString() ?? "none (cancelled or missing)")}");
                 // Still registered = the user cancelled it or it failed. Don't rip files out of a working program by surprise.
                 if ((code == null || Deleter.RegistryKeyExists(a.RegistryKey)) &&
                     MessageBox.Show(this, $"{a.Name} still looks installed (the uninstaller was cancelled or failed).\n\n" +
                         "Search for its files anyway? Deleting them will break the program.", "Zilch",
                         MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                {
-                    SetBusy(false, "");
                     return;
-                }
             }
             else History.Add("Force remove", a.Name + " (uninstaller skipped)");
 
-            await HuntAndRemove(a, folder, $"{a.Name}: leftovers");
-            SetBusy(false, "");
+            HuntAndRemove(a, folder, $"{a.Name}: leftovers");
             LoadApps();
         }
 
-        async void FindOnly()
+        void FindOnly()
         {
             var a = Sel();
             if (a == null) { Dialogs.Info(this, "Pick a program first."); return; }
-            SetBusy(true, "Searching…");
-            await HuntAndRemove(a, InstalledApps.GuessFolder(a), $"{a.Name}: traces (program NOT uninstalled)");
-            SetBusy(false, "");
+            HuntAndRemove(a, InstalledApps.GuessFolder(a), $"{a.Name}: traces (program NOT uninstalled)");
             LoadApps();
         }
 
-        async Task HuntAndRemove(InstalledApp a, string folder, string title)
+        void HuntAndRemove(InstalledApp a, string folder, string title)
         {
-            SetBusy(true, $"Searching for traces of {a.Name}…");
             bool medium = AppState.IsAdvancedOrMore;
             var others = _apps.Where(x => x != a).Select(x => InstalledApps.GuessFolder(x)).Where(d => d != null).Select(Guard.Norm).ToList();
-            var found = await Task.Run(() => new LeftoverFinder(a.Name, a.Publisher, folder, a.RegistryKey) { OtherInstallDirs = others }.Find(medium));
-            SetBusy(false, "");
+            var found = Busy.Run(this, $"Searching for traces of {a.Name}…", f =>
+                new LeftoverFinder(a.Name, a.Publisher, folder, a.RegistryKey) { OtherInstallDirs = others }.Find(medium));
+            if (found == null) return;
             if (found.Count == 0) { Dialogs.Info(this, $"No traces of {a.Name} found. Clean."); return; }
 
             using (var dlg = new LeftoverDialog(title,
@@ -179,19 +176,11 @@ namespace Zilch.UI
                 if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Chosen.Count == 0) return;
                 var chosen = dlg.Chosen;
                 bool recycle = AppState.UseRecycleBin, force = AppState.IsSudo;
-                SetBusy(true, "Removing traces…");
-                var r = await Task.Run(() => LeftoverFinder.Remove(chosen, recycle, force));
-                SetBusy(false, "");
+                var r = Busy.Run(this, "Removing traces…", f => LeftoverFinder.Remove(chosen, recycle, force));
+                if (r == null) return;
                 History.Add("Removed leftovers", r, chosen.Select(c => $"[{c.Kind}] {c.Path}"));
                 MessageBox.Show(this, r.Summary(), a.Name, MessageBoxButtons.OK, r.Failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             }
-        }
-
-        void SetBusy(bool busy, string text)
-        {
-            UseWaitCursor = busy;
-            _uninstall.Enabled = _force.Enabled = _leftovers.Enabled = _list.Enabled = !busy;
-            _status.Text = text;
         }
     }
 }

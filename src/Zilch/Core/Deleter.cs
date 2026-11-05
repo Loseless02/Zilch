@@ -11,6 +11,7 @@ namespace Zilch.Core
         public int Deleted;
         public int ScheduledForReboot;
         public long BytesFreed;
+        public long BytesRecycled;   // part of BytesFreed that only moved to the Recycle Bin
         public List<string> Failed = new List<string>();
 
         public string Summary()
@@ -53,7 +54,7 @@ namespace Zilch.Core
                     fFlags = (ushort)(Native.FOF_ALLOWUNDO | Native.FOF_NOCONFIRMATION | Native.FOF_SILENT | Native.FOF_NOERRORUI),
                 };
                 int rc = Native.SHFileOperationW(ref op);
-                if (rc == 0 && !op.fAnyOperationsAborted && !Exists(path)) { r.Deleted++; r.BytesFreed += size; return; }
+                if (rc == 0 && !op.fAnyOperationsAborted && !Exists(path)) { r.Deleted++; r.BytesFreed += size; r.BytesRecycled += size; return; }
                 if (!force) { r.Failed.Add(path + " (Recycle Bin refused it)"); return; }
                 // fall through to a hard delete in Sudo mode
             }

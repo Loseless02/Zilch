@@ -45,7 +45,7 @@ namespace Zilch.Core
                 }
                 catch { }
             }
-            Added?.Invoke(e);
+            try { Added?.Invoke(e); } catch { }
         }
 
         public static void Add(string action, DeleteResult r, IEnumerable<string> targets)
@@ -53,6 +53,7 @@ namespace Zilch.Core
             var d = new List<string>();
             foreach (var t in targets) d.Add("- " + t);
             foreach (var f in r.Failed) d.Add("! failed: " + f);
+            Stats.Add(r.BytesFreed - r.BytesRecycled);
             Add(action, $"{r.Deleted} removed, {Fmt.Size(r.BytesFreed)} freed" +
                         (r.ScheduledForReboot > 0 ? $", {r.ScheduledForReboot} on reboot" : "") +
                         (r.Failed.Count > 0 ? $", {r.Failed.Count} failed" : ""), d);
