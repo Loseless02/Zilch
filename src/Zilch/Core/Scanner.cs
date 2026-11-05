@@ -18,6 +18,10 @@ namespace Zilch.Core
         public byte[] OwnCats;       // folders that sort files by type: categories of the files directly inside...
         public long[] OwnCatBytes;   // ...and their bytes. null when the folder's own Cat takes all its files.
         public List<DirNode> Children = new List<DirNode>();
+        public string FileNames;     // names of the files directly inside, joined with \0 (for search)
+        public long[] FileSizes;     // their sizes; bit 62 set = hidden/system file
+
+        public const long HiddenBit = 1L << 62;
 
         public string FullPath
         {
@@ -81,6 +85,7 @@ namespace Zilch.Core
             node.Children = new List<DirNode>();
             node.Denied = false;
             node.OwnCats = null; node.OwnCatBytes = null;
+            node.FileNames = null; node.FileSizes = null;
             node.Size = node.OwnFilesSize = node.FileCount = 0;
             new Scanner(CancellationToken.None, 1).ScanDir(node, node.FullPath.TrimEnd('\\'), 0);
             long dSize = node.Size - oldSize, dFiles = node.FileCount - oldFiles;
@@ -117,7 +122,14 @@ namespace Zilch.Core
             long dSize = own - node.OwnFilesSize, dFiles = files.Count - (node.FileCount - childFiles);
             node.OwnFilesSize = own;
             SetOwnCats(node, catBytes);
+            SetNames(node, files.ConvertAll(f => System.IO.Path.GetFileName(f.Path)), files.ConvertAll(f => f.Size | ((f.Attributes & (Native.FILE_ATTRIBUTE_HIDDEN | Native.FILE_ATTRIBUTE_SYSTEM)) != 0 ? DirNode.HiddenBit : 0)));
             for (var p = node; p != null; p = p.Parent) { p.Size += dSize; p.FileCount += dFiles; }
+        }
+
+        static void SetNames(DirNode node, List<string> names, List<long> sizes)
+        {
+            node.FileNames = names == null || names.Count == 0 ? null : string.Join("\0", names);
+            node.FileSizes = sizes == null || sizes.Count == 0 ? null : sizes.ToArray();
         }
 
         static void SetOwnCats(DirNode node, long[] catBytes)
@@ -152,6 +164,7 @@ namespace Zilch.Core
             long ownSize = 0, ownFiles = 0;
             bool split = !Categories.Absorbs(node.Cat);
             long[] catBytes = null;
+            List<string> names = null; List<long> sizes = null;
             try
             {
                 do
@@ -171,6 +184,11 @@ namespace Zilch.Core
                         ownFiles++;
                         if (split) (catBytes ?? (catBytes = new long[Categories.N]))[(int)Categories.ForFile(name, node.Cat)] += size;
                         if (size > Volatile.Read(ref _topMin)) OfferTop(path + "\\" + name, size, fd.dwFileAttributes);
+                        if (!_serial)
+                        {
+                            (names ?? (names = new List<string>())).Add(name);
+                            (sizes ?? (sizes = new List<long>())).Add(size | ((fd.dwFileAttributes & (Native.FILE_ATTRIBUTE_HIDDEN | Native.FILE_ATTRIBUTE_SYSTEM)) != 0 ? DirNode.HiddenBit : 0));
+                        }
                     }
                 } while (Native.FindNextFileW(h, out fd));
             }
@@ -178,6 +196,7 @@ namespace Zilch.Core
 
             Interlocked.Add(ref FilesSeen, ownFiles);
             Interlocked.Add(ref BytesSeen, ownSize);
+            SetNames(node, names, sizes);
             if (catBytes != null)
             {
                 int k = 0;

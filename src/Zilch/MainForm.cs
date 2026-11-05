@@ -11,7 +11,7 @@ namespace Zilch
         readonly RadioButton _simple = ModeButton("Simple");
         readonly RadioButton _advanced = ModeButton("Advanced");
         readonly RadioButton _sudo = ModeButton("Sudo");
-        readonly CheckBox _recycle = new CheckBox { Text = "Use Recycle Bin (undo possible, frees no space until emptied)", AutoSize = true, Padding = new Padding(16, 6, 0, 0) };
+        readonly CheckBox _recycle = new CheckBox { Text = "Use Recycle Bin", AutoSize = true, Padding = new Padding(12, 6, 0, 0) };
         readonly Label _banner = new Label
         {
             Dock = DockStyle.Top, Height = 30, TextAlign = ContentAlignment.MiddleCenter, Visible = false,
@@ -44,11 +44,10 @@ namespace Zilch
             }
             catch { }
 
-            var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(8, 8, 8, 4), WrapContents = false };
+            var bar = new FlowLayoutPanel { Location = Point.Empty, AutoSize = false, Padding = new Padding(8, 8, 8, 4), WrapContents = true };
             bar.Controls.Add(new Label { Text = "Mode:", AutoSize = true, Padding = new Padding(0, 7, 4, 0), Font = Theme.Bold });
-            bar.Controls.AddRange(new Control[] { _simple, _advanced, _sudo, _recycle });
             var refresh = new Button { Text = "Refresh (F5)", Width = 100, Height = 28, Margin = new Padding(12, 3, 3, 3) };
-            bar.Controls.Add(refresh);
+            bar.Controls.AddRange(new Control[] { _simple, _advanced, _sudo, refresh, _recycle });
             if (!Elevation.IsAdmin)
             {
                 var admin = new LinkLabel { Text = "Restart as admin", AutoSize = true, Padding = new Padding(16, 7, 0, 0) };
@@ -58,6 +57,7 @@ namespace Zilch
             var tip = new ToolTip();
             tip.SetToolTip(_simple, "Safe defaults. Hides system files and anything Zilch isn't sure about.");
             tip.SetToolTip(_advanced, "Shows hidden files, similar-name leftovers, registry details, silent/force uninstall, optional Windows apps.");
+            tip.SetToolTip(_recycle, "Deleted things go to the Recycle Bin, so you can undo. They free no space until you empty it.");
             tip.SetToolTip(_sudo, "Admin. Shows and deletes EVERYTHING, including Windows system files and apps Windows marks non-removable.");
 
             // wiped counters, top right
@@ -67,6 +67,18 @@ namespace Zilch
             var header = new Panel { Dock = DockStyle.Top, Height = 46 };
             header.Controls.Add(bar);
             header.Controls.Add(stats);
+            // the buttons get the width the counters leave free, and wrap to a second line instead of hiding under them
+            void LayoutHeader()
+            {
+                int avail = Math.Max(200, header.ClientSize.Width - stats.PreferredSize.Width - 4);
+                var ps = bar.GetPreferredSize(new Size(avail, 0));
+                bar.Size = new Size(avail, ps.Height);
+                int h = Math.Max(ps.Height, stats.PreferredSize.Height);
+                if (header.Height != h) header.Height = h;
+            }
+            header.SizeChanged += (s, e) => LayoutHeader();
+            _session.TextChanged += (s, e) => LayoutHeader();
+            _allTime.TextChanged += (s, e) => LayoutHeader();
             ShowStats();
             Stats.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)ShowStats); };
 

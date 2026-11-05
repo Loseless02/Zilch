@@ -36,6 +36,7 @@ internal static class Program
             GuardTests(sandbox);
             ScannerTests(sandbox);
             CategoryTests(sandbox);
+            SearchTests(sandbox);
             DeleterTests(sandbox);
             LeftoverTests(sandbox);
             ReadOnlyTests(args.Contains("--scan-c"));
@@ -181,6 +182,41 @@ internal static class Program
         Check(Zilch.UI.Prefs.Pass(false, 0), "no filter passes everything");
     }
 
+    // ------------------------------------------------------------------
+    static void SearchTests(string sandbox)
+    {
+        Section("Inspector search (whole disk, exact and relatives)");
+        var root = Path.Combine(sandbox, "search");
+        Directory.CreateDirectory(Path.Combine(root, @"Microsoft Office\root"));
+        Directory.CreateDirectory(Path.Combine(root, "Photos"));
+        File.WriteAllBytes(Path.Combine(root, @"Microsoft Office\root\WINWORD.EXE"), new byte[300]);
+        File.WriteAllBytes(Path.Combine(root, @"Photos\holiday.jpg"), new byte[200]);
+        File.WriteAllBytes(Path.Combine(root, "notes.txt"), new byte[10]);
+        var tree = new Scanner(default).Scan(root);
+        var nodes = new List<DirNode>();
+        var st = new Stack<DirNode>(); st.Push(tree);
+        while (st.Count > 0) { var n = st.Pop(); nodes.Add(n); foreach (var c in n.Children) st.Push(c); }
+        var arr = nodes.ToArray();
+        List<SearchHit> S(string q, bool rel) => Search.Run(arr, q, rel, default);
+
+        var fice = S("fice", false);
+        Check(fice.Count == 1 && fice[0].IsDir && fice[0].Name == "Microsoft Office", "\"fice\" finds the Microsoft Office folder");
+        Check(S("winword", false).Any(h => !h.IsDir && h.Name == "WINWORD.EXE" && h.Size == 300), "file names are searchable, any case, with sizes");
+        Check(S("mivcrosoft", false).Count == 0, "a typo finds nothing when relatives are off");
+        var rel = S("mivcrosoft", true);
+        Check(rel.Count == 1 && rel[0].Name == "Microsoft Office" && rel[0].Distance == 1, "relatives on: \"mivcrosoft\" finds Microsoft (1 typo)");
+        Check(S("holyday", true).Any(h => h.Name == "holiday.jpg"), "relatives on: \"holyday\" finds holiday.jpg");
+        Check(S("xyzzyq", true).Count == 0, "nonsense finds nothing even with relatives");
+
+        var m = Search.Marks("Microsoft Office", "fice", false);
+        Check(string.Concat(m.Select(b => b ? '1' : '0')) == "0000000000001111", "highlight marks exactly the matching letters");
+        var mf = Search.Marks("Microsoft Office", "mivcrosoft", true);
+        Check(mf.Take(9).All(b => b) && mf.Skip(9).All(b => !b), "near match highlights the letters that line up");
+
+        File.Delete(Path.Combine(root, "notes.txt"));
+        Scanner.RescanFiles(tree);
+        Check(Search.Run(new[] { tree }, "notes", false, default).Count == 0, "deleted file drops out of the search");
+    }
     // ------------------------------------------------------------------
     static void DeleterTests(string sandbox)
     {

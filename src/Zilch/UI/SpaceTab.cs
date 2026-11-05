@@ -14,6 +14,8 @@ namespace Zilch.UI
     public sealed class SpaceItem
     {
         public string Path; public long Size; public bool IsDir; public DirNode Node; public uint Attr; public Risk Risk; public Cat Cat; public string KindText;
+        /// <summary>Search result: letters of the name to highlight. The row then shows "name   folder it is in".</summary>
+        public bool[] Marks;
     }
 
     /// <summary>"What is eating my disk?" Scan a drive, drill into folders, delete.</summary>
@@ -286,6 +288,7 @@ namespace Zilch.UI
             _drive = drive;
             _root = _current = node;
             _catTotals = totals;
+            _treeVersion++;
             _scannedAt = DateTime.Now;
             _stale = false;
             _topFiles = sc.TopFiles();
@@ -312,7 +315,7 @@ namespace Zilch.UI
             {
                 f.Report(node.FullPath);
                 Scanner.Rescan(node);
-                _catTotals = Categories.Totals(_root);
+                _catTotals = Categories.Totals(_root); _treeVersion++;
                 lock (_topFiles) _topFiles.RemoveAll(t => !File.Exists(t.Path));
             });
             _scannedAt = DateTime.Now;
@@ -460,17 +463,51 @@ namespace Zilch.UI
         internal static void DrawCell(ListView list, DrawListViewSubItemEventArgs e)
         {
             var r = e.Item.Tag as SpaceItem;
-            if (e.ColumnIndex == 0 && r != null && Prefs.ColorChips)
+            if (e.ColumnIndex == 0 && r != null && (Prefs.ColorChips || r.Marks != null))
             {
                 e.DrawBackground();
                 bool sel = e.Item.Selected;
                 if (sel) e.Graphics.FillRectangle(SystemBrushes.Highlight, e.Bounds);
-                int h = Math.Max(8, e.Bounds.Height - 10);
-                var chip = new Rectangle(e.Bounds.X + 4, e.Bounds.Y + (e.Bounds.Height - h) / 2, h, h);
-                using (var b = new SolidBrush(Theme.Of(r.Cat))) e.Graphics.FillRectangle(b, chip);
-                var tr = new Rectangle(chip.Right + 5, e.Bounds.Y, e.Bounds.Right - chip.Right - 5, e.Bounds.Height);
-                TextRenderer.DrawText(e.Graphics, e.Item.Text, e.Item.Font ?? list.Font, tr, sel ? SystemColors.HighlightText : e.Item.ForeColor,
-                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                int x = e.Bounds.X + 4;
+                if (Prefs.ColorChips)
+                {
+                    int h = Math.Max(8, e.Bounds.Height - 10);
+                    var chip = new Rectangle(x, e.Bounds.Y + (e.Bounds.Height - h) / 2, h, h);
+                    using (var b = new SolidBrush(Theme.Of(r.Cat))) e.Graphics.FillRectangle(b, chip);
+                    x = chip.Right + 5;
+                }
+                var font = e.Item.Font ?? list.Font;
+                var fore = sel ? SystemColors.HighlightText : e.Item.ForeColor;
+                const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+                if (r.Marks == null)
+                {
+                    TextRenderer.DrawText(e.Graphics, e.Item.Text, font, new Rectangle(x, e.Bounds.Y, e.Bounds.Right - x, e.Bounds.Height), fore, flags | TextFormatFlags.EndEllipsis);
+                    return;
+                }
+                // search row: the name with the matching letters in green, then the folder it lives in
+                var name = System.IO.Path.GetFileName(r.Path.TrimEnd('\\'));
+                if (string.IsNullOrEmpty(name)) name = r.Path;
+                var clip = e.Graphics.Clip;
+                e.Graphics.SetClip(e.Bounds);
+                int i = 0;
+                while (i < name.Length)
+                {
+                    bool hl = i < r.Marks.Length && r.Marks[i];
+                    int j = i;
+                    while (j < name.Length && (j < r.Marks.Length && r.Marks[j]) == hl) j++;
+                    var run = name.Substring(i, j - i);
+                    int rw = TextRenderer.MeasureText(e.Graphics, run, font, new Size(int.MaxValue, e.Bounds.Height), flags | TextFormatFlags.NoPadding).Width;
+                    if (hl) using (var bg = new SolidBrush(Color.FromArgb(190, 240, 190))) e.Graphics.FillRectangle(bg, x, e.Bounds.Y + 2, rw, e.Bounds.Height - 4);
+                    TextRenderer.DrawText(e.Graphics, run, font, new Rectangle(x, e.Bounds.Y, rw + 4, e.Bounds.Height), hl ? Color.FromArgb(0, 100, 0) : fore, flags | TextFormatFlags.NoPadding);
+                    x += rw;
+                    i = j;
+                }
+                if (r.IsDir) { TextRenderer.DrawText(e.Graphics, "\\", font, new Rectangle(x, e.Bounds.Y, 12, e.Bounds.Height), fore, flags | TextFormatFlags.NoPadding); x += TextRenderer.MeasureText("\\", font, Size.Empty, TextFormatFlags.NoPadding).Width; }
+                var parent = System.IO.Path.GetDirectoryName(r.Path.TrimEnd('\\')) ?? "";
+                if (x < e.Bounds.Right - 20)
+                    TextRenderer.DrawText(e.Graphics, "   in " + parent, list.Font, new Rectangle(x, e.Bounds.Y, e.Bounds.Right - x, e.Bounds.Height),
+                        sel ? SystemColors.HighlightText : Theme.Muted, flags | TextFormatFlags.EndEllipsis);
+                e.Graphics.Clip = clip;
                 return;
             }
             if (e.ColumnIndex != 2 || !(e.SubItem.Tag is long permille)) { e.DrawDefault = true; return; }
@@ -591,14 +628,12 @@ namespace Zilch.UI
                 {
                     var owner = FindNode(System.IO.Path.GetDirectoryName(row.Path));
                     if (owner == null) continue;
-                    Categories.RemoveFile(owner, System.IO.Path.GetFileName(row.Path), row.Size);
-                    owner.OwnFilesSize -= row.Size;
-                    for (var n = owner; n != null; n = n.Parent) { n.Size -= row.Size; n.FileCount--; }
+                    if (Directory.Exists(owner.FullPath)) Scanner.RescanFiles(owner); // sizes, categories and the search index in one go
                 }
             }
             lock (_topFiles)
                 _topFiles.RemoveAll(t => rows.Any(r => t.Path.StartsWith(r.Path, StringComparison.OrdinalIgnoreCase)) && !File.Exists(t.Path));
-            _catTotals = Categories.Totals(_root);
+            _catTotals = Categories.Totals(_root); _treeVersion++;
         }
 
         static bool IsUnder(DirNode n, DirNode ancestor)
@@ -677,13 +712,32 @@ namespace Zilch.UI
                 f.Report("Checking single files…");
                 foreach (var o in items.Where(i => !i.IsDir).Select(i => FindNode(System.IO.Path.GetDirectoryName(i.Path))).Where(n => n != null).Distinct().ToList())
                     if (Directory.Exists(o.FullPath)) Scanner.RescanFiles(o);
-                _catTotals = Categories.Totals(_root);
+                _catTotals = Categories.Totals(_root); _treeVersion++;
                 lock (_topFiles) _topFiles.RemoveAll(t => !File.Exists(t.Path));
                 return Categories.Find(_root, c).Select(ci => new SpaceItem { Path = ci.Path, Size = ci.Size, IsDir = ci.IsDir, Node = ci.Node, Attr = ci.Attr, Cat = c }).ToList();
             });
             Fill();
             UpdateBar();
             return result;
+        }
+
+        int _treeVersion, _flatVersion = -1;
+        DirNode[] _flat;
+
+        /// <summary>The scanned tree (null before the first scan).</summary>
+        public DirNode Root => _root;
+
+        /// <summary>Every folder of the scan in one array, for searching. Rebuilt after any change to the tree.</summary>
+        public DirNode[] Flat()
+        {
+            if (_root == null) return new DirNode[0];
+            if (_flat != null && _flatVersion == _treeVersion) return _flat;
+            var list = new List<DirNode>();
+            var stack = new Stack<DirNode>();
+            stack.Push(_root);
+            while (stack.Count > 0) { var n = stack.Pop(); list.Add(n); foreach (var c in n.Children) stack.Push(c); }
+            _flat = list.ToArray(); _flatVersion = _treeVersion;
+            return _flat;
         }
 
         public long CategoryTotal(Cat c) => _catTotals == null ? 0 : _catTotals[(int)c];
