@@ -48,6 +48,14 @@ namespace Zilch.UI
     public static class Nav
     {
         public static Action<Control> Show = c => { };
+        /// <summary>Open a path in the Space tab ("Show in Zilch").</summary>
+        public static Action<string> OpenPath = p => { };
+    }
+
+    /// <summary>Tabs that know how to reload themselves (the Refresh button / F5).</summary>
+    public interface IRefreshable
+    {
+        void RefreshNow();
     }
 
     /// <summary>ListView without flicker, with click-to-sort columns.</summary>

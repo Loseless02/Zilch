@@ -2,7 +2,7 @@
 
 **Find what eats your disk, and remove it with zilch left behind.**
 
-Zilch is a tiny (~300 KB), fast Windows cleaner. One `.exe`, no installer, nothing to set up.
+Zilch is a tiny (~350 KB), fast Windows cleaner. One `.exe`, no installer, nothing to set up.
 It shows you where your storage went, uninstalls programs *and every trace they leave*,
 and rips out the stuff Windows preinstalls and won't let you remove: Edge, Copilot, Xbox, Bing apps, OneDrive and friends.
 
@@ -20,9 +20,12 @@ and rips out the stuff Windows preinstalls and won't let you remove: Edge, Copil
 | **Processes** | A task manager that updates every second: CPU, RAM, GPU and VRAM per process (with 60 s graphs for the whole PC), disk I/O, what each process is doing (window title / description), its publisher and path. Color-coded: Windows, services, apps, background, and **unknown** (no signature, no publisher). End a process or its whole tree, show it in Explorer or in Zilch. |
 | **Windows Bloat** | Removes preinstalled Store apps for **every user** and deprovisions them so new accounts and feature updates don't bring them back. Removes **Microsoft Edge** (forced system uninstall + blocks reinstall) and **OneDrive**. Optional switch stops Windows silently installing "suggested" apps and turns off Copilot. Restore point button. |
 | **Junk** | Temp files, Recycle Bin, thumbnail cache, crash dumps, browser caches, GPU shader caches, Windows Update leftovers, Delivery Optimization, old `Windows.old`, hibernation file, component store cleanup. |
+| **Settings** | Storage bar on/off, size, top or bottom, legend sizes and percentages; your own category colors; color squares, colored share bars, risk colors, bold folders; which columns to show; filters (only folders, only files, only things bigger than X MB/GB). |
 | **Logs** | Every delete, uninstall, cleanup, ended process and startup change Zilch did, with the full list of paths. Errors Zilch caught land here too. Stored locally, clearable. |
 
-Top right: how much you wiped this session, and for all time.
+Top right: how much you wiped this session, and for all time. Next to the modes: one **Refresh (F5)** that reloads whatever tab you are on. If another tab (Junk, Apps...) deletes something, the Space bar tells you the scan is out of date.
+
+**Track (what is this?)** on any file, folder or Windows app: where it lives, which program it belongs to (or that nothing installed matches it), what it is doing right now, when it last changed, what it hooks into, and a conclusion: *you can remove it*, *your call*, or *you should not remove it*. Windows apps with cryptic names (`Microsoft.4297127D64EC6`) show their real name (Minecraft Launcher) read from the package itself.
 
 While Zilch deletes, uninstalls or cleans, a progress window with a timestamp locks the app, so nothing can be clicked or closed mid-way. Every error is caught and logged; Zilch keeps running.
 
@@ -77,7 +80,7 @@ The self-tests only ever create and delete their own `ZilchTest*` dummy files, f
 ## Privacy
 
 No telemetry, no network calls, no settings files. The only things Zilch writes are its own history at
-`%LOCALAPPDATA%\Zilch\history.log` (Logs tab → *Clear history* deletes it) and the all-time wiped counter in `wiped.txt` next to it.
+`%LOCALAPPDATA%\Zilch\history.log` (Logs tab → *Clear history* deletes it) the all-time wiped counter in `wiped.txt`, and `settings.ini` once you change a setting, all in that folder.
 
 ## License
 

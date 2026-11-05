@@ -10,7 +10,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>Installed programs: uninstall, then hunt down everything they left behind.</summary>
-    public sealed class AppsTab : UserControl
+    public sealed class AppsTab : UserControl, IRefreshable
     {
         readonly TextBox _search = new TextBox { Width = 260 };
         readonly Button _refresh = new Button { Text = "Refresh", Width = 80 };
@@ -109,6 +109,8 @@ namespace Zilch.UI
             }
             _list.EndUpdate();
         }
+
+        public void RefreshNow() => LoadApps();
 
         InstalledApp Sel() => _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as InstalledApp : null;
 

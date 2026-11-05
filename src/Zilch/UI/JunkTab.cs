@@ -8,7 +8,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>One-click cleanup of caches, temp files, dumps and update leftovers.</summary>
-    public sealed class JunkTab : UserControl
+    public sealed class JunkTab : UserControl, IRefreshable
     {
         readonly FastListView _list = new FastListView { Dock = DockStyle.Fill, CheckBoxes = true };
         readonly Button _analyze = new Button { Text = "Analyze", Width = 100 };
@@ -63,6 +63,8 @@ namespace Zilch.UI
         }
 
         List<JunkItem> Checked() => _list.CheckedItems.Cast<ListViewItem>().Select(i => (JunkItem)i.Tag).ToList();
+
+        public void RefreshNow() => Analyze();
 
         async void Analyze()
         {

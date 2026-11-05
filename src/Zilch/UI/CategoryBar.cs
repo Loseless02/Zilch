@@ -43,6 +43,7 @@ namespace Zilch.UI
         }
 
         int Line => Font.Height;
+        int BarH => Prefs.BarHeight == BarSize.Small ? Math.Max(6, Line / 2) : Prefs.BarHeight == BarSize.Large ? Line * 2 : Line + 4;
 
         void Relayout()
         {
@@ -56,14 +57,15 @@ namespace Zilch.UI
                     if (x + iw > w && x > 0) { rows++; x = 0; }
                     x += iw;
                 }
-                int h = Line + 6 + (Line + 4) + 6 + rows * (Line + 4) + 4;
+                int h = Line + 6 + BarH + 6 + (Prefs.BarLegend ? rows * (Line + 4) : 0) + 4;
                 if (Height != h) Height = h;
             }
         }
 
         protected override void OnResize(EventArgs e) { base.OnResize(e); if (IsHandleCreated) Relayout(); }
 
-        static string Label(Seg s) => $"{s.Name}  {Fmt.Size(s.Bytes)}";
+        string Label(Seg s) =>
+            s.Name + (Prefs.BarLegendSizes ? "  " + Fmt.Size(s.Bytes) : "") + (Prefs.BarPercent ? $"  {100.0 * s.Bytes / _total:0.#}%" : "");
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -79,8 +81,8 @@ namespace Zilch.UI
                 TextRenderer.DrawText(g, _hint, Font, new Point(pad + cw + 8, 2), Theme.Muted, TextFormatFlags.NoPrefix);
             }
 
-            var bar = new Rectangle(pad, line + 6, ClientSize.Width - 2 * pad, line + 4);
-            using (var path = Rounded(bar, 5))
+            var bar = new Rectangle(pad, line + 6, ClientSize.Width - 2 * pad, BarH);
+            using (var path = Rounded(bar, Math.Min(5, bar.Height / 2)))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 using (var bg = new SolidBrush(Theme.Free)) g.FillPath(bg, path);
@@ -104,6 +106,7 @@ namespace Zilch.UI
                 using (var pen = new Pen(Color.FromArgb(200, 200, 200))) g.DrawPath(pen, path);
             }
 
+            if (!Prefs.BarLegend) return;
             // legend
             int lx = pad, ly = bar.Bottom + 6, w2 = ClientSize.Width - 2 * pad;
             foreach (var s in _segs)

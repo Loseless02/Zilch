@@ -19,9 +19,13 @@ namespace Zilch.Core
     /// </summary>
     public static class History
     {
-        public static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Zilch");
+        // ZILCH_HOME moves Zilch's own files (log, counter, settings) elsewhere; the self-tests use it to stay off your real ones.
+        public static readonly string Folder = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ZILCH_HOME"))
+            ? Environment.GetEnvironmentVariable("ZILCH_HOME")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Zilch");
         public static readonly string FilePath = Path.Combine(Folder, "history.log");
         static readonly object Lock = new object();
+        static History() { } // no beforefieldinit: ZILCH_HOME is read on first use, not whenever the JIT feels like it
 
         public static event Action<HistoryEntry> Added;
 

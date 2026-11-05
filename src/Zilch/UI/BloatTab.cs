@@ -9,7 +9,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>Microsoft Edge, OneDrive and the apps Windows preinstalls on first launch.</summary>
-    public sealed class BloatTab : UserControl
+    public sealed class BloatTab : UserControl, IRefreshable
     {
         readonly Label _edgeState = new Label { AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
         readonly Button _edge = new Button { Text = "Remove Microsoft Edge", Width = 180, Font = Theme.Bold };
@@ -18,8 +18,9 @@ namespace Zilch.UI
         readonly Button _onedrive = new Button { Text = "Remove OneDrive", Width = 180 };
         readonly CheckBox _block = new CheckBox { Text = "Stop Windows reinstalling bloat, ads and Copilot", Checked = true, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
         readonly Button _restore = new Button { Text = "Create restore point", Width = 150 };
-        readonly FastListView _list = new FastListView { Dock = DockStyle.Fill, CheckBoxes = true };
+        readonly FastListView _list = new FastListView { Dock = DockStyle.Fill, CheckBoxes = true, ShowItemToolTips = true };
         readonly Button _load = new Button { Text = "Load apps", Width = 100 };
+        readonly Button _track = new Button { Text = "Track (what is this?)", Width = 150 };
         readonly Button _remove = new Button { Text = "Remove checked apps", Width = 160, Font = Theme.Bold };
         readonly Label _status = new Label { AutoSize = true, ForeColor = Theme.Muted, Padding = new Padding(0, 6, 0, 0) };
 
@@ -42,13 +43,16 @@ namespace Zilch.UI
                 AutoSize = true, ForeColor = Theme.Muted, Padding = new Padding(0, 8, 0, 4),
             });
 
-            _list.Columns.Add("App", 260);
-            _list.Columns.Add("Package", 360);
-            _list.Columns.Add("Kind", 90);
-            _list.Columns.Add("Note", 260);
+            _list.Columns.Add("App", 230);
+            _list.Columns.Add("Should you remove it?", 180);
+            _list.Columns.Add("What it is", 420);
+            _list.Columns.Add("Package", 300);
+            _list.Columns.Add("Kind", 80);
+            _list.Columns.Add("Note", 240);
+            _list.DoubleClick += (s, e) => Track();
 
             var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
-            bottom.Controls.AddRange(new Control[] { _remove, _load, _status });
+            bottom.Controls.AddRange(new Control[] { _remove, _load, _track, _status });
 
             Controls.Add(_list);
             Controls.Add(bottom);
@@ -65,8 +69,19 @@ namespace Zilch.UI
             };
             _load.Click += (s, e) => LoadApps();
             _remove.Click += (s, e) => RemoveApps();
+            _track.Click += (s, e) => Track();
             AppState.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)Fill); };
             RefreshState();
+        }
+
+        public void RefreshNow() { RefreshState(); LoadApps(); }
+
+        void Track()
+        {
+            var a = _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as AppxApp : null;
+            if (a == null) { Dialogs.Info(this, "Select an app first."); return; }
+            TrackDialog.Open(this, a.Friendly, () => Explain.ForAppx(a),
+                string.IsNullOrEmpty(a.InstallLocation) ? (Action)null : () => Nav.OpenPath(a.InstallLocation));
         }
 
         void RefreshState()
@@ -97,7 +112,13 @@ namespace Zilch.UI
                             (a.Category == AppxCategory.Optional && AppState.IsAdvancedOrMore) ||
                             (a.Category == AppxCategory.System && AppState.IsSudo);
                 if (!show) { hidden++; continue; }
-                var it = new ListViewItem(a.Friendly) { Tag = a, Checked = a.Category == AppxCategory.Bloat };
+                var it = new ListViewItem(a.Friendly) { Tag = a, Checked = a.Category == AppxCategory.Bloat, UseItemStyleForSubItems = false };
+                var (what, verdict, why) = Explain.Summarize(a);
+                var vcell = it.SubItems.Add(Explanation.VerdictLabel(verdict));
+                vcell.ForeColor = TrackDialog.ColorOf(verdict);
+                vcell.Font = Theme.Bold;
+                it.SubItems.Add(what);
+                it.ToolTipText = what + "\n\n" + Explanation.VerdictLabel(verdict) + ": " + why + "\n\nTrack for the full story.";
                 it.SubItems.Add(a.Name);
                 it.SubItems.Add(a.Category.ToString());
                 var notes = new List<string>();
@@ -106,8 +127,8 @@ namespace Zilch.UI
                 if (a.IsFramework) notes.Add("framework other apps use");
                 if (a.Provisioned) notes.Add("installs for new users");
                 it.SubItems.Add(string.Join(", ", notes));
-                if (a.Category == AppxCategory.System) it.ForeColor = Theme.Danger;
-                else if (a.Category == AppxCategory.Optional) it.ForeColor = SystemColors.ControlText;
+                var fc = a.Category == AppxCategory.System ? Theme.Danger : SystemColors.ControlText;
+                foreach (ListViewItem.ListViewSubItem sub in it.SubItems) if (sub != vcell) sub.ForeColor = fc;
                 _list.Items.Add(it);
             }
             _list.EndUpdate();

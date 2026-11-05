@@ -9,7 +9,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>Everything in one category of the disk bar (all Games, all Videos...), biggest first.</summary>
-    public sealed class InspectorTab : UserControl
+    public sealed class InspectorTab : UserControl, IRefreshable
     {
         readonly Panel _swatch = new Panel { Width = 18, Height = 18, Margin = new Padding(0, 6, 6, 0) };
         readonly Label _title = new Label { AutoSize = true, UseMnemonic = false, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, SystemFonts.MessageBoxFont.Size * 1.3f, FontStyle.Bold), Padding = new Padding(0, 2, 0, 0) };
@@ -21,6 +21,8 @@ namespace Zilch.UI
         readonly Button _selectAll = new Button { Text = "Select all", Width = 90 };
         readonly Button _zilch = new Button { Text = "Open in Zilch", Width = 110 };
         readonly Button _explore = new Button { Text = "Show in Explorer", Width = 130 };
+        readonly Button _track = new Button { Text = "Track (what is this?)", Width = 150 };
+        readonly Button _refresh = new Button { Text = "Refresh (F5)", Width = 100 };
 
         readonly SpaceTab _space;
         List<SpaceItem> _items = new List<SpaceItem>();
@@ -36,7 +38,7 @@ namespace Zilch.UI
             var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false };
             top.Controls.AddRange(new Control[] { _swatch, _title, _info });
             var tools = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false };
-            tools.Controls.AddRange(new Control[] { new Label { Text = "Filter:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, _filter });
+            tools.Controls.AddRange(new Control[] { new Label { Text = "Search:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, _filter, _refresh });
 
             _list.Columns.Add("Name", 560);
             _list.Columns.Add("Size", 90, HorizontalAlignment.Right);
@@ -54,6 +56,7 @@ namespace Zilch.UI
             var menu = new ContextMenuStrip();
             menu.Items.Add("Open in Zilch", null, (s, e) => OpenInZilch());
             menu.Items.Add("Show in Explorer", null, (s, e) => Explore());
+            menu.Items.Add("Track (what is this? can I remove it?)", null, (s, e) => Track());
             menu.Items.Add("Copy path", null, (s, e) => { var r = Sel().FirstOrDefault(); if (r != null) try { Clipboard.SetText(r.Path); } catch { } });
             menu.Items.Add("Select all", null, (s, e) => _list.SelectAll());
             menu.Items.Add(new ToolStripSeparator());
@@ -62,7 +65,7 @@ namespace Zilch.UI
             _list.ContextMenuStrip = menu;
 
             var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
-            bottom.Controls.AddRange(new Control[] { _delete, _empty, _selectAll, _explore, _zilch });
+            bottom.Controls.AddRange(new Control[] { _delete, _empty, _selectAll, _explore, _zilch, _track });
 
             Controls.Add(_list);
             Controls.Add(bottom);
@@ -75,6 +78,10 @@ namespace Zilch.UI
             _selectAll.Click += (s, e) => { _list.Focus(); _list.SelectAll(); };
             _zilch.Click += (s, e) => OpenInZilch();
             _explore.Click += (s, e) => Explore();
+            _track.Click += (s, e) => Track();
+            _refresh.Click += (s, e) => RefreshNow();
+            Prefs.Changed += () => { SpaceTab.ApplyColumns(_list); Fill(); };
+            SpaceTab.ApplyColumns(_list);
             AppState.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)Fill); };
 
             _title.Text = "Inspector";
@@ -98,18 +105,20 @@ namespace Zilch.UI
             _list.BeginUpdate();
             _list.Items.Clear();
             _list.ListViewItemSorter = null;
-            int hidden = 0;
+            int hidden = 0, filtered = 0;
             foreach (var r in _items)
             {
                 if (q.Length > 0 && r.Path.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                 bool h = (r.Attr & (Native.FILE_ATTRIBUTE_HIDDEN | Native.FILE_ATTRIBUTE_SYSTEM)) != 0 || (r.Node != null && r.Node.Hidden);
                 if (h && !AppState.IsAdvancedOrMore) { hidden++; continue; }
+                if (!Prefs.Pass(r.IsDir, r.Size)) { filtered++; continue; }
                 r.Risk = Guard.Classify(r.Path);
                 _list.Items.Add(SpaceTab.MakeRow(r, false, _total, h));
             }
             _list.EndUpdate();
             _info.Text = $"{Fmt.Size(_total)} in total.  {_items.Count(i => i.IsDir)} folder(s), {_items.Count(i => !i.IsDir)} file(s) listed, biggest first." +
                          (hidden > 0 ? $"  {hidden} hidden item(s): Advanced shows them." : "") +
+                         (filtered > 0 ? $"  {filtered} hidden by your filter ({Prefs.FilterText()})." : "") +
                          "  Double-click opens it in the Space tab.";
         }
 
@@ -118,6 +127,19 @@ namespace Zilch.UI
         void OpenInZilch() { var r = Sel().FirstOrDefault(); if (r != null) _space.OpenPath(r.Path); }
 
         void Explore() { var r = Sel().FirstOrDefault(); if (r != null) Dialogs.ShowInExplorer(r.Path); }
+
+        void Track() { var r = Sel().FirstOrDefault(); if (r != null) SpaceTab.TrackItem(this, r); else Dialogs.Info(this, "Select something first."); }
+
+        /// <summary>Rescan everything in this list and list the category again.</summary>
+        public void RefreshNow()
+        {
+            if (_title.Text == "Inspector") return;
+            var fresh = _space.RecheckCategory(_cat, _items);
+            if (fresh == null) return;
+            _items = fresh;
+            _total = _space.CategoryTotal(_cat);
+            Fill();
+        }
 
         void Delete(bool emptyOnly)
         {

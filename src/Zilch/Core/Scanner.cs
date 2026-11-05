@@ -100,6 +100,39 @@ namespace Zilch.Core
 
         static string Long(string p) => p.StartsWith(@"\\") ? p : @"\\?\" + p;
 
+        /// <summary>Re-read only the files directly inside a folder (not its subfolders) and fix the sizes above it.</summary>
+        public static void RescanFiles(DirNode node)
+        {
+            var files = ListFiles(node.FullPath);
+            long own = 0;
+            bool split = !Categories.Absorbs(node.Cat);
+            var catBytes = split ? new long[Categories.N] : null;
+            foreach (var f in files)
+            {
+                own += f.Size;
+                if (split) catBytes[(int)Categories.ForFile(System.IO.Path.GetFileName(f.Path), node.Cat)] += f.Size;
+            }
+            long childFiles = 0;
+            foreach (var c in node.Children) childFiles += c.FileCount;
+            long dSize = own - node.OwnFilesSize, dFiles = files.Count - (node.FileCount - childFiles);
+            node.OwnFilesSize = own;
+            SetOwnCats(node, catBytes);
+            for (var p = node; p != null; p = p.Parent) { p.Size += dSize; p.FileCount += dFiles; }
+        }
+
+        static void SetOwnCats(DirNode node, long[] catBytes)
+        {
+            node.OwnCats = null; node.OwnCatBytes = null;
+            if (catBytes == null) return;
+            int k = 0;
+            foreach (var b in catBytes) if (b > 0) k++;
+            if (k == 0) return;
+            node.OwnCats = new byte[k]; node.OwnCatBytes = new long[k];
+            k = 0;
+            for (int i = 0; i < catBytes.Length; i++)
+                if (catBytes[i] > 0) { node.OwnCats[k] = (byte)i; node.OwnCatBytes[k++] = catBytes[i]; }
+        }
+
         void ScanDir(DirNode node, string path, int depth)
         {
             if (_ct.IsCancellationRequested) return;

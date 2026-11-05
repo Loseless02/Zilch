@@ -17,6 +17,14 @@ namespace Zilch.Core
         public string Signature;
         public AppxCategory Category;
         public long Size = -1;
+
+        // read from the package's AppxManifest.xml (see Explain.ReadManifests)
+        public string DisplayName, PublisherName, Description;
+        public List<string> Dependencies = new List<string>();
+        public List<string> UsedBy = new List<string>();
+        public List<string> Does = new List<string>();      // plain-English list of what it hooks into
+        public List<string> Access = new List<string>();    // sensitive capabilities
+        public bool StartsWithWindows;
     }
 
     /// <summary>Preinstalled Windows apps (Appx/MSIX), Microsoft Edge and OneDrive.</summary>
@@ -115,6 +123,7 @@ Get-AppxPackage {all} -PackageTypeFilter Main,Framework -ErrorAction SilentlyCon
                 if (f[3] == "1") a.NonRemovable = true;
             }
             var list = byName.Values.ToList();
+            try { Explain.ReadManifests(list); } catch { }
             list.Sort((x, y) => x.Category != y.Category ? x.Category.CompareTo(y.Category) : string.Compare(x.Friendly, y.Friendly, StringComparison.OrdinalIgnoreCase));
             return list;
         }

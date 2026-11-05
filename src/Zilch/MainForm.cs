@@ -36,6 +36,7 @@ namespace Zilch
             Size = new Size(1180, 760);
             MinimumSize = new Size(900, 560);
             StartPosition = FormStartPosition.CenterScreen;
+            Prefs.Load();
             try
             {
                 using (var st = typeof(MainForm).Assembly.GetManifestResourceStream("zilch.ico"))
@@ -46,6 +47,8 @@ namespace Zilch
             var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(8, 8, 8, 4), WrapContents = false };
             bar.Controls.Add(new Label { Text = "Mode:", AutoSize = true, Padding = new Padding(0, 7, 4, 0), Font = Theme.Bold });
             bar.Controls.AddRange(new Control[] { _simple, _advanced, _sudo, _recycle });
+            var refresh = new Button { Text = "Refresh (F5)", Width = 100, Height = 28, Margin = new Padding(12, 3, 3, 3) };
+            bar.Controls.Add(refresh);
             if (!Elevation.IsAdmin)
             {
                 var admin = new LinkLabel { Text = "Restart as admin", AutoSize = true, Padding = new Padding(16, 7, 0, 0) };
@@ -80,10 +83,22 @@ namespace Zilch
             Tab("Windows Bloat", new BloatTab());
             Tab("Junk", new JunkTab());
             Tab("Logs", new LogsTab());
+            Tab("Settings", new SettingsTab());
             Nav.Show = c =>
             {
                 foreach (TabPage p in tabs.TabPages) if (p.Contains(c)) { tabs.SelectedTab = p; return; }
             };
+            Nav.OpenPath = p => space.OpenPath(p);
+
+            // one Refresh for every tab: the button, or F5 anywhere
+            void RefreshCurrent()
+            {
+                if (tabs.SelectedTab?.Controls.Count > 0 && tabs.SelectedTab.Controls[0] is IRefreshable r) r.RefreshNow();
+            }
+            refresh.Click += (s, e) => RefreshCurrent();
+            tip.SetToolTip(refresh, "Reload whatever tab you are on (rescan, reload the list...).");
+            KeyPreview = true;
+            KeyDown += (s, e) => { if (e.KeyCode == Keys.F5) { e.Handled = e.SuppressKeyPress = true; RefreshCurrent(); } };
 
             Controls.Add(tabs);
             Controls.Add(_banner);

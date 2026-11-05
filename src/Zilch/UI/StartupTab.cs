@@ -9,7 +9,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>What starts with Windows, and a switch for each.</summary>
-    public sealed class StartupTab : UserControl
+    public sealed class StartupTab : UserControl, IRefreshable
     {
         readonly FastListView _list = new FastListView { Dock = DockStyle.Fill };
         readonly Button _enable = new Button { Text = "Enable", Width = 80 };
@@ -54,6 +54,8 @@ namespace Zilch.UI
             AppState.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)Reload); };
             VisibleChanged += (s, e) => { if (Visible && _items.Count == 0) Reload(); };
         }
+
+        public void RefreshNow() => Reload();
 
         async void Reload()
         {

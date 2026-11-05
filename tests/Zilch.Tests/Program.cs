@@ -28,8 +28,11 @@ internal static class Program
     {
         var sandbox = Path.Combine(Path.GetTempPath(), "ZilchTest_" + Guid.NewGuid().ToString("N").Substring(0, 8));
         Directory.CreateDirectory(sandbox);
+        // Zilch's own files (history, wiped counter, settings) go into the sandbox, never your real ones
+        Environment.SetEnvironmentVariable("ZILCH_HOME", Path.Combine(sandbox, "home"));
         try
         {
+            Check(History.Folder.StartsWith(sandbox), "history, counter and settings go to the test sandbox");
             GuardTests(sandbox);
             ScannerTests(sandbox);
             CategoryTests(sandbox);
@@ -158,6 +161,24 @@ internal static class Program
         var a = tree.Children.First(c => c.Name == "a");
         Scanner.Rescan(a);
         Check(a.Size == 2000 && tree.Size == 3100 && tree.FileCount == 4, $"rescan fixes parent sizes (root {tree.Size}, files {tree.FileCount})");
+        File.Delete(Path.Combine(root, "top.bin"));
+        Scanner.RescanFiles(tree);
+        Check(tree.Size == 2100 && tree.FileCount == 3 && tree.OwnFilesSize == 0, $"files-only rescan (root {tree.Size}, files {tree.FileCount})");
+
+        Section("Track: what is this, can I remove it?");
+        var ex = Explain.ForPath(Path.Combine(root, "c"), true, Cat.Cache, 100);
+        Check(ex.Verdict == Verdict.Remove, "a cache folder: you can remove it (" + ex.Conclusion + ")");
+        var sys = Explain.ForPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32"), true, Cat.Windows, 1);
+        Check(sys.Verdict == Verdict.Keep && sys.Facts.Any(f => f.Value == "Windows"), "System32: keep, belongs to Windows");
+        var self = Explain.ForPath(Process.GetCurrentProcess().MainModule.FileName, false, Cat.Unknown, 1);
+        Check(self.Facts.Any(f => f.Key == "Doing right now" && f.Value.Contains("Zilch.Tests")), "sees that a file is running");
+        foreach (var fct in ex.Facts) Console.WriteLine($"       {fct.Key}: {fct.Value}");
+
+        Section("Settings filters");
+        Zilch.UI.Prefs.Show = Zilch.UI.ShowKind.FoldersOnly; Zilch.UI.Prefs.MinBytes = 1000;
+        Check(Zilch.UI.Prefs.Pass(true, 5000) && !Zilch.UI.Prefs.Pass(false, 5000) && !Zilch.UI.Prefs.Pass(true, 10), "folders only, at least 1000 bytes");
+        Zilch.UI.Prefs.Show = Zilch.UI.ShowKind.All; Zilch.UI.Prefs.MinBytes = 0;
+        Check(Zilch.UI.Prefs.Pass(false, 0), "no filter passes everything");
     }
 
     // ------------------------------------------------------------------
@@ -326,6 +347,14 @@ internal static class Program
         Check(appx.Where(a => a.Category == AppxCategory.Bloat).All(a => !a.Name.StartsWith("Microsoft.WindowsStore") && !a.Name.StartsWith("Microsoft.VCLibs")),
               "Store and frameworks are never marked as bloat");
         Console.WriteLine($"       Edge installed: {Debloat.EdgeInstalled}, WebView2: {Debloat.WebViewInstalled}, OneDrive: {Debloat.OneDriveUninstaller() != null}");
+        int named = appx.Count(a => a.DisplayName != null);
+        Check(appx.Count == 0 || named > appx.Count / 2, $"real names read from manifests for {named} of {appx.Count} apps");
+        var explained = appx.Select(a => (a, s: Explain.Summarize(a))).ToList();
+        Check(explained.All(e => !string.IsNullOrWhiteSpace(e.s.what) && !string.IsNullOrWhiteSpace(e.s.why)), "every Windows app gets a what-it-is and a verdict");
+        Check(explained.Where(e => e.a.Category == AppxCategory.System).All(e => e.s.v == Verdict.Keep), "system apps are always 'keep'");
+        Check(explained.Where(e => e.a.UsedBy.Count > 0).All(e => e.s.v == Verdict.Keep), "apps other apps need are 'keep'");
+        foreach (var e in explained.Where(e => e.a.Category == AppxCategory.Optional).Take(12))
+            Console.WriteLine($"       {e.a.Name,-45} {e.a.Friendly,-32} {Explanation.VerdictLabel(e.s.v),-24} {e.s.what}");
 
         if (scanC)
         {

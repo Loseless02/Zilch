@@ -17,7 +17,7 @@ namespace Zilch.UI
     }
 
     /// <summary>"What is eating my disk?" Scan a drive, drill into folders, delete.</summary>
-    public sealed class SpaceTab : UserControl
+    public sealed class SpaceTab : UserControl, IRefreshable
     {
         readonly ComboBox _drives = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, DrawMode = DrawMode.OwnerDrawFixed };
         readonly Button _scan = new Button { Text = "Scan", Width = 80 };
@@ -35,6 +35,7 @@ namespace Zilch.UI
         readonly Button _empty = new Button { Text = "Free up this folder", Width = 140 };
         readonly Button _selectAll = new Button { Text = "Select all", Width = 90 };
         readonly Button _explore = new Button { Text = "Show in Explorer", Width = 130 };
+        readonly Button _track = new Button { Text = "Track (what is this?)", Width = 150 };
         readonly System.Windows.Forms.Timer _progress = new System.Windows.Forms.Timer { Interval = 150 };
         readonly System.Windows.Forms.Timer _live = new System.Windows.Forms.Timer { Interval = 1000 };
 
@@ -46,6 +47,7 @@ namespace Zilch.UI
         long[] _catTotals;
         DateTime _scannedAt;
         string _afterScanSelect;
+        bool _stale, _selfChange;
 
         /// <summary>The Inspector tab, set by MainForm.</summary>
         public InspectorTab Inspector;
@@ -70,7 +72,7 @@ namespace Zilch.UI
             sum.Controls.Add(_summary);
 
             var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
-            bottom.Controls.AddRange(new Control[] { _delete, _empty, _selectAll, _explore });
+            bottom.Controls.AddRange(new Control[] { _delete, _empty, _selectAll, _explore, _track });
 
             _list.Columns.Add("Name", 360);
             _list.Columns.Add("Size", 90, HorizontalAlignment.Right);
@@ -88,12 +90,12 @@ namespace Zilch.UI
                 if (e.KeyCode == Keys.Enter) OpenSelected();
                 else if (e.KeyCode == Keys.Back) GoUp();
                 else if (e.KeyCode == Keys.Delete) DeleteSelected();
-                else if (e.KeyCode == Keys.F5) Refresh_();
             };
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Open", null, (s, e) => OpenSelected());
             menu.Items.Add("Show in Explorer", null, (s, e) => Explore());
+            menu.Items.Add("Track (what is this? can I remove it?)", null, (s, e) => TrackSelected());
             menu.Items.Add("Copy path", null, (s, e) => { var r = Selected().FirstOrDefault(); if (r != null) try { Clipboard.SetText(r.Path); } catch { } });
             menu.Items.Add("Select all", null, (s, e) => _list.SelectAll());
             menu.Items.Add(new ToolStripSeparator());
@@ -129,6 +131,7 @@ namespace Zilch.UI
             _empty.Click += (s, e) => FreeUpSelected();
             _selectAll.Click += (s, e) => { _list.Focus(); _list.SelectAll(); };
             _explore.Click += (s, e) => Explore();
+            _track.Click += (s, e) => TrackSelected();
             _bar.SegmentClicked += OnSegment;
             _progress.Tick += (s, e) =>
             {
@@ -140,6 +143,18 @@ namespace Zilch.UI
             VisibleChanged += (s, e) => { if (Visible) { _drives.Invalidate(); UpdateBar(); } };
 
             AppState.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)Fill); };
+            Prefs.Changed += ApplyPrefs;
+            // anything another tab deletes (Junk clean, uninstall...) makes this scan out of date
+            History.Added += h =>
+            {
+                if (_selfChange || _root == null) return;
+                if ((h.Summary ?? "").Contains(" freed") || h.Action.StartsWith("Remove") || h.Action.StartsWith("Uninstall") || h.Action.StartsWith("Force"))
+                {
+                    _stale = true;
+                    try { if (IsHandleCreated) BeginInvoke((Action)UpdateBar); } catch { }
+                }
+            };
+            ApplyPrefs();
             LoadDrives();
             HandleCreated += (s, e) => { UpdateBar(); _live.Start(); };
         }
@@ -191,8 +206,8 @@ namespace Zilch.UI
                 if (d != null)
                 {
                     long unseen = (size - free) - _root.Size;
-                    if (unseen > 0) segs.Add(new CategoryBar.Seg { Name = "Hidden from apps", Color = Theme.Hidden, Bytes = unseen, Key = "hidden" });
-                    segs.Add(new CategoryBar.Seg { Name = "Free", Color = Theme.Free, Bytes = free, Key = "free" });
+                    if (unseen > 0 && Prefs.BarHidden) segs.Add(new CategoryBar.Seg { Name = "Hidden from apps", Color = Theme.Hidden, Bytes = unseen, Key = "hidden" });
+                    if (Prefs.BarFree) segs.Add(new CategoryBar.Seg { Name = "Free", Color = Theme.Free, Bytes = free, Key = "free" });
                     // hard links (WinSxS) and cloud placeholders can make the scan bigger than the used space
                     total = Math.Max(size, segs.Sum(x => x.Bytes));
                     caption = $"{d.Name.TrimEnd('\\')}   {Fmt.Size(free)} free of {Fmt.Size(size)}";
@@ -202,7 +217,8 @@ namespace Zilch.UI
                     total = _root.Size;
                     caption = $"{_root.FullPath}   {Fmt.Size(_root.Size)}";
                 }
-                hint = $"scanned {Ago(_scannedAt)}. Click a color to see what's in it.";
+                hint = _stale ? "Files changed since this scan (cleanup / uninstall). Press Refresh (F5) to update."
+                              : $"scanned {Ago(_scannedAt)}. Click a color to see what's in it.";
             }
             else if (d != null)
             {
@@ -271,6 +287,7 @@ namespace Zilch.UI
             _root = _current = node;
             _catTotals = totals;
             _scannedAt = DateTime.Now;
+            _stale = false;
             _topFiles = sc.TopFiles();
             var took = sw.Elapsed.TotalSeconds;
             _summary.Text = $"{Fmt.Size(node.Size)} in {node.FileCount:N0} files, scanned in {took:0.0}s. {sc.DeniedCount:N0} folder(s) not readable." +
@@ -299,6 +316,7 @@ namespace Zilch.UI
                 lock (_topFiles) _topFiles.RemoveAll(t => !File.Exists(t.Path));
             });
             _scannedAt = DateTime.Now;
+            if (node == _root) _stale = false;
             Fill();
             UpdateBar();
             ShowTotals("refreshed");
@@ -351,7 +369,7 @@ namespace Zilch.UI
             _list.Items.Clear();
             _list.ListViewItemSorter = null;
             var rows = new List<SpaceItem>();
-            long hiddenBytes = 0; int hiddenCount = 0;
+            long hiddenBytes = 0, filteredBytes = 0; int hiddenCount = 0, filtered = 0;
 
             if (_viewFolders.Checked)
             {
@@ -390,6 +408,7 @@ namespace Zilch.UI
             {
                 bool hidden = (r.Attr & (Native.FILE_ATTRIBUTE_HIDDEN | Native.FILE_ATTRIBUTE_SYSTEM)) != 0;
                 if (hidden && !ShowHidden) { hiddenBytes += r.Size; hiddenCount++; continue; }
+                if (!Prefs.Pass(r.IsDir, r.Size)) { filtered++; filteredBytes += r.Size; continue; }
                 r.Risk = Guard.Classify(r.Path);
                 var it = MakeRow(r, _viewFolders.Checked, parentSize, hidden);
                 if (keep.Contains(r.Path)) it.Selected = true;
@@ -401,6 +420,12 @@ namespace Zilch.UI
                 it.SubItems.Add(FastListView.SizeCell(it, hiddenBytes));
                 _list.Items.Add(it);
             }
+            if (filtered > 0)
+            {
+                var it = new ListViewItem($"    + {filtered} item(s) hidden by your filter ({Prefs.FilterText()}). Change it in Settings.") { ForeColor = Theme.Muted };
+                it.SubItems.Add(FastListView.SizeCell(it, filteredBytes));
+                _list.Items.Add(it);
+            }
             _list.EndUpdate();
         }
 
@@ -409,7 +434,7 @@ namespace Zilch.UI
         {
             var name = shortName ? System.IO.Path.GetFileName(r.Path) : r.Path;
             var it = new ListViewItem(r.IsDir && shortName ? name + "\\" : name) { Tag = r };
-            if (r.IsDir) it.Font = Theme.Bold;
+            if (r.IsDir && Prefs.BoldFolders) it.Font = Theme.Bold;
             it.SubItems.Add(FastListView.SizeCell(it, r.Size));
             it.SubItems.Add(new ListViewItem.ListViewSubItem(it, "") { Tag = (long)(r.Size * 1000 / Math.Max(1, parentSize)) });
             it.SubItems.Add(new ListViewItem.ListViewSubItem(it, r.IsDir && r.Node != null ? r.Node.FileCount.ToString("N0") : "") { Tag = r.IsDir && r.Node != null ? r.Node.FileCount : 0L });
@@ -422,6 +447,7 @@ namespace Zilch.UI
             else if (r.Risk == Risk.Caution) notes.Add(AppState.IsAdvancedOrMore ? "shared / whole app" : "locked: Advanced only");
             it.SubItems.Add(string.Join(", ", notes));
 
+            if (!Prefs.ColorRisk) { if (hidden) it.ForeColor = Theme.Muted; return it; }
             if (r.Risk == Risk.Protected) it.ForeColor = AppState.IsSudo ? Theme.Danger : Theme.Muted;
             else if (r.Risk == Risk.Caution) it.ForeColor = Theme.Warn;
             else if (hidden) it.ForeColor = Theme.Muted;
@@ -434,7 +460,7 @@ namespace Zilch.UI
         internal static void DrawCell(ListView list, DrawListViewSubItemEventArgs e)
         {
             var r = e.Item.Tag as SpaceItem;
-            if (e.ColumnIndex == 0 && r != null)
+            if (e.ColumnIndex == 0 && r != null && Prefs.ColorChips)
             {
                 e.DrawBackground();
                 bool sel = e.Item.Selected;
@@ -453,7 +479,7 @@ namespace Zilch.UI
             var rr = new Rectangle(e.Bounds.X + 4, e.Bounds.Y + 4, e.Bounds.Width - 50, e.Bounds.Height - 8);
             e.Graphics.FillRectangle(Brushes.Gainsboro, rr);
             var w = (int)(rr.Width * Math.Min(1000, permille) / 1000);
-            var color = e.Item.ForeColor == Theme.Danger ? Theme.Danger : r != null ? Theme.Of(r.Cat) : Theme.Bar;
+            var color = e.Item.ForeColor == Theme.Danger ? Theme.Danger : r != null && Prefs.ColorShareBars ? Theme.Of(r.Cat) : Theme.Bar;
             using (var b = new SolidBrush(color)) e.Graphics.FillRectangle(b, rr.X, rr.Y, w, rr.Height);
             TextRenderer.DrawText(e.Graphics, $"{permille / 10.0:0.0}%", list.Font,
                 new Point(rr.Right + 4, e.Bounds.Y + 2), e.Item.Selected ? SystemColors.HighlightText : SystemColors.ControlText);
@@ -530,7 +556,9 @@ namespace Zilch.UI
             if (res == null) { Fill(); UpdateBar(); return false; }
 
             var action = (emptyOnly ? "Emptied" : recycle ? "Recycled" : force ? "Force-deleted" : "Deleted");
-            History.Add(action, res, rows.Select(r => $"{r.Path}  ({Fmt.Size(r.Size)})"));
+            _selfChange = true;
+            try { History.Add(action, res, rows.Select(r => $"{r.Path}  ({Fmt.Size(r.Size)})")); }
+            finally { _selfChange = false; }
             Fill();
             UpdateBar();
             ShowTotals("after your last change");
@@ -577,6 +605,95 @@ namespace Zilch.UI
         {
             for (; n != null; n = n.Parent) if (n == ancestor) return true;
             return false;
+        }
+
+        public void RefreshNow() => Refresh_();
+
+        void ApplyPrefs()
+        {
+            _bar.Visible = Prefs.BarVisible;
+            if (Prefs.BarPosition == BarPlace.Bottom) { _bar.Dock = DockStyle.Bottom; Controls.SetChildIndex(_bar, 1); }
+            else { _bar.Dock = DockStyle.Top; Controls.SetChildIndex(_bar, Controls.Count - 2); }
+            ApplyColumns(_list);
+            UpdateBar();
+            Fill();
+        }
+
+        /// <summary>Show/hide the Share, Files, Kind and Note columns (Settings → Details).</summary>
+        internal static void ApplyColumns(ListView l)
+        {
+            bool[] on = { true, true, Prefs.ColShare, Prefs.ColFiles, Prefs.ColKind, Prefs.ColNote };
+            for (int i = 2; i < l.Columns.Count && i < on.Length; i++)
+            {
+                var c = l.Columns[i];
+                if (c.Tag == null) c.Tag = c.Width;
+                if (!on[i]) { if (c.Width > 0) c.Tag = c.Width; c.Width = 0; }
+                else if (c.Width == 0) c.Width = (int)c.Tag;
+            }
+        }
+
+        void TrackSelected()
+        {
+            var r = Selected().FirstOrDefault();
+            if (r == null && _current != null && _viewFolders.Checked)
+                r = new SpaceItem { Path = _current.FullPath, IsDir = true, Size = _current.Size, Node = _current, Cat = _current.Cat };
+            if (r == null) { Dialogs.Info(this, "Select a file or folder first."); return; }
+            TrackItem(this, r);
+        }
+
+        /// <summary>"What is this, can I remove it?" for a file or folder.</summary>
+        internal static void TrackItem(IWin32Window owner, SpaceItem r)
+        {
+            var cat = r.Cat;
+            if (r.Node != null)
+            {
+                // judge a folder by what's inside only when it's almost all one kind
+                var (dom, share) = Categories.Dominant(r.Node);
+                cat = share >= 0.9 ? dom : r.Node.Cat;
+            }
+            TrackDialog.Open(owner, System.IO.Path.GetFileName(r.Path.TrimEnd('\\')),
+                () => Explain.ForPath(r.Path, r.IsDir, cat, r.Size), () => Nav.OpenPath(r.Path));
+        }
+
+        /// <summary>
+        /// Inspector's Refresh: rescan every folder in the list (and the folders holding listed files),
+        /// then list the category again. Returns null if there is no scan.
+        /// </summary>
+        public List<SpaceItem> RecheckCategory(Cat c, List<SpaceItem> items)
+        {
+            if (_root == null) return null;
+            var result = Busy.Run(this, "Refreshing " + Categories.Name(c), f =>
+            {
+                var nodes = items.Where(i => i.IsDir && i.Node != null).Select(i => i.Node).Distinct().ToList();
+                var set = new HashSet<DirNode>(nodes);
+                nodes = nodes.Where(n => { for (var p = n.Parent; p != null; p = p.Parent) if (set.Contains(p)) return false; return true; }).ToList();
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    var n = nodes[i];
+                    f.Report(n.FullPath, (double)i / Math.Max(1, nodes.Count));
+                    if (n.Parent != null && !n.Parent.Children.Contains(n)) continue; // already gone from the tree
+                    if (!Directory.Exists(n.FullPath)) DropNode(n); else Scanner.Rescan(n);
+                }
+                f.Report("Checking single files…");
+                foreach (var o in items.Where(i => !i.IsDir).Select(i => FindNode(System.IO.Path.GetDirectoryName(i.Path))).Where(n => n != null).Distinct().ToList())
+                    if (Directory.Exists(o.FullPath)) Scanner.RescanFiles(o);
+                _catTotals = Categories.Totals(_root);
+                lock (_topFiles) _topFiles.RemoveAll(t => !File.Exists(t.Path));
+                return Categories.Find(_root, c).Select(ci => new SpaceItem { Path = ci.Path, Size = ci.Size, IsDir = ci.IsDir, Node = ci.Node, Attr = ci.Attr, Cat = c }).ToList();
+            });
+            Fill();
+            UpdateBar();
+            return result;
+        }
+
+        public long CategoryTotal(Cat c) => _catTotals == null ? 0 : _catTotals[(int)c];
+
+        static void DropNode(DirNode n)
+        {
+            var parent = n.Parent;
+            if (parent == null) return;
+            parent.Children.Remove(n);
+            for (var p = parent; p != null; p = p.Parent) { p.Size -= n.Size; p.FileCount -= n.FileCount; }
         }
 
         DirNode FindNode(string path)

@@ -190,7 +190,7 @@ namespace Zilch.Core
             }
         }
 
-        static string ImagePath(int pid)
+        public static string ImagePath(int pid)
         {
             var h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
             if (h == IntPtr.Zero) return null;

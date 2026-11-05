@@ -90,7 +90,8 @@ namespace Zilch.Core
                 // the user's synced files, never "leftovers" of the OneDrive app
                 Env("OneDrive"), Env("OneDriveConsumer"), Env("OneDriveCommercial"),
                 // Zilch's own history folder and the folder it runs from
-                History.Folder, Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath),
+                History.Folder, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Zilch"),
+                Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath),
             })
                 if (!string.IsNullOrEmpty(p)) CautionExact.Add(Norm(p));
         }

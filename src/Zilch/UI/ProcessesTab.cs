@@ -78,7 +78,7 @@ namespace Zilch.UI
     }
 
     /// <summary>Everything running, what it's doing, and a way to stop it. Updates every second.</summary>
-    public sealed class ProcessesTab : UserControl
+    public sealed class ProcessesTab : UserControl, IRefreshable
     {
         readonly Meters _meters = new Meters();
         readonly TextBox _search = new TextBox { Width = 220 };
@@ -163,6 +163,8 @@ namespace Zilch.UI
             _timer.Tick += (s, e) => Tick();
             VisibleChanged += (s, e) => { if (Visible) { _timer.Start(); Tick(); } else _timer.Stop(); };
         }
+
+        public void RefreshNow() => Tick();
 
         async void Tick()
         {

@@ -6,7 +6,7 @@ using Zilch.Core;
 namespace Zilch.UI
 {
     /// <summary>Everything Zilch did, newest first.</summary>
-    public sealed class LogsTab : UserControl
+    public sealed class LogsTab : UserControl, IRefreshable
     {
         readonly FastListView _list = new FastListView { Dock = DockStyle.Fill, MultiSelect = false };
         readonly TextBox _details = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new System.Drawing.Font("Consolas", 9f) };
@@ -49,6 +49,8 @@ namespace Zilch.UI
             History.Added += e => { if (IsHandleCreated) BeginInvoke((Action)Reload); };
             HandleCreated += (s, e) => Reload();
         }
+
+        public void RefreshNow() => Reload();
 
         void Reload()
         {
